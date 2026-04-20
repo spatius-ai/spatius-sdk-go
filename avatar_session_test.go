@@ -1,4 +1,4 @@
-package avatarsdkgo
+package spatiussdkgo
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	message "github.com/spatialwalk/avatar-sdk-go/proto/generated"
+	message "github.com/spatius-ai/spatius-sdk-go/proto/generated"
 	"google.golang.org/protobuf/proto"
 )
 

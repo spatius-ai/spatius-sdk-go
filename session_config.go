@@ -1,4 +1,4 @@
-package avatarsdkgo
+package spatiussdkgo
 
 import "time"
 

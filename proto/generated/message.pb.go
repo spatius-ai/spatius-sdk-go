@@ -1005,7 +1005,7 @@ const file_message_proto_rawDesc = "" +
 	"EgressType\x12\x1b\n" +
 	"\x17EGRESS_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13EGRESS_TYPE_LIVEKIT\x10\x01\x12\x15\n" +
-	"\x11EGRESS_TYPE_AGORA\x10\x02B6Z4github.com/spatialwalk/avatar-sdk-go/proto/generatedb\x06proto3"
+	"\x11EGRESS_TYPE_AGORA\x10\x02B6Z4github.com/spatius-ai/spatius-sdk-go/proto/generatedb\x06proto3"
 
 var (
 	file_message_proto_rawDescOnce sync.Once

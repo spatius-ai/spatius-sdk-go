@@ -1,4 +1,4 @@
-package avatarsdkgo
+package spatiussdkgo
 
 import (
 	"encoding/binary"
@@ -12,7 +12,7 @@ import (
 
 const (
 	oggOpusDefaultPreSkip   = 312
-	oggOpusVendor           = "avatarsdkgo"
+	oggOpusVendor           = "spatiussdkgo"
 	oggOpusCRCPoly          = 0x04C11DB7
 	opusPCMBytesPerSample   = 2
 	opusEncoderChannels     = 1
@@ -95,7 +95,7 @@ func NewOggOpusStreamEncoder(sampleRate int, bitrate int, config *OggOpusEncoder
 
 	if bitrate > 0 {
 		if err := encoder.SetBitrate(bitrate); err != nil {
-			log.Printf("avatarsdkgo: failed to set Opus encoder bitrate %d, using encoder default: %v", bitrate, err)
+			log.Printf("spatiussdkgo: failed to set Opus encoder bitrate %d, using encoder default: %v", bitrate, err)
 		}
 	}
 

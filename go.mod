@@ -1,4 +1,4 @@
-module github.com/spatialwalk/avatar-sdk-go
+module github.com/spatius-ai/spatius-sdk-go
 
 go 1.23
 

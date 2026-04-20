@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	avatarsdkgo "github.com/spatialwalk/avatar-sdk-go"
+	spatiussdkgo "github.com/spatius-ai/spatius-sdk-go"
 )
 
 const (
@@ -256,18 +256,18 @@ func (s *server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 
 	coll := newCollector()
 
-	session := avatarsdkgo.NewAvatarSession(
-		avatarsdkgo.WithAPIKey(s.sdkConfig.apiKey),
-		avatarsdkgo.WithAppID(s.sdkConfig.appID),
-		avatarsdkgo.WithConsoleEndpointURL(s.sdkConfig.consoleEndpointURL),
-		avatarsdkgo.WithIngressEndpointURL(s.sdkConfig.ingressEndpointURL),
-		avatarsdkgo.WithAvatarID(s.sdkConfig.avatarID),
-		avatarsdkgo.WithExpireAt(time.Now().Add(defaultSessionTTLMinutes*time.Minute).UTC()),
-		avatarsdkgo.WithSampleRate(req.SampleRate),
-		avatarsdkgo.WithBitrate(0),
-		avatarsdkgo.WithTransportFrames(coll.transportFrames),
-		avatarsdkgo.WithOnError(coll.onError),
-		avatarsdkgo.WithOnClose(coll.onClose),
+	session := spatiussdkgo.NewAvatarSession(
+		spatiussdkgo.WithAPIKey(s.sdkConfig.apiKey),
+		spatiussdkgo.WithAppID(s.sdkConfig.appID),
+		spatiussdkgo.WithConsoleEndpointURL(s.sdkConfig.consoleEndpointURL),
+		spatiussdkgo.WithIngressEndpointURL(s.sdkConfig.ingressEndpointURL),
+		spatiussdkgo.WithAvatarID(s.sdkConfig.avatarID),
+		spatiussdkgo.WithExpireAt(time.Now().Add(defaultSessionTTLMinutes*time.Minute).UTC()),
+		spatiussdkgo.WithSampleRate(req.SampleRate),
+		spatiussdkgo.WithBitrate(0),
+		spatiussdkgo.WithTransportFrames(coll.transportFrames),
+		spatiussdkgo.WithOnError(coll.onError),
+		spatiussdkgo.WithOnClose(coll.onClose),
 	)
 
 	var connectionID, reqID string
@@ -279,7 +279,7 @@ func (s *server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if err := session.Init(ctx); err != nil {
-		if sdkErr, ok := err.(*avatarsdkgo.AvatarSDKError); ok {
+		if sdkErr, ok := err.(*spatiussdkgo.AvatarSDKError); ok {
 			writeError(w, http.StatusBadGateway, "sdk_error", sdkErr.Message)
 			return
 		}
@@ -289,7 +289,7 @@ func (s *server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 
 	connectionID, err = session.Start(ctx)
 	if err != nil {
-		if sdkErr, ok := err.(*avatarsdkgo.AvatarSDKError); ok {
+		if sdkErr, ok := err.(*spatiussdkgo.AvatarSDKError); ok {
 			writeError(w, http.StatusBadGateway, "sdk_error", sdkErr.Message)
 			return
 		}

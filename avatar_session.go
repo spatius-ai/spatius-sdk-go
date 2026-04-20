@@ -1,4 +1,4 @@
-package avatarsdkgo
+package spatiussdkgo
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	message "github.com/spatialwalk/avatar-sdk-go/proto/generated"
+	message "github.com/spatius-ai/spatius-sdk-go/proto/generated"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -631,7 +631,7 @@ func (s *AvatarSession) notifyEncodedAudio(reqID string, encodedAudio []byte) {
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			log.Printf("avatarsdkgo: on encoded audio callback panicked: %v", recovered)
+			log.Printf("spatiussdkgo: on encoded audio callback panicked: %v", recovered)
 		}
 	}()
 

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package message;
 
-option go_package = "github.com/spatialwalk/avatar-sdk-go/proto/generated";
+option go_package = "github.com/spatius-ai/spatius-sdk-go/proto/generated";
 
 enum MessageType {
   MESSAGE_UNSPECIFIED = 0;

@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	avatarsdkgo "github.com/spatialwalk/avatar-sdk-go"
+	spatiussdkgo "github.com/spatius-ai/spatius-sdk-go"
 )
 
 const (
@@ -71,17 +71,17 @@ func main() {
 	collector := newAnimationCollector()
 
 	// Create avatar session
-	session := avatarsdkgo.NewAvatarSession(
-		avatarsdkgo.WithAPIKey(cfg.APIKey),
-		avatarsdkgo.WithAppID(cfg.AppID),
-		avatarsdkgo.WithUseQueryAuth(cfg.UseQueryAuth),
-		avatarsdkgo.WithConsoleEndpointURL(cfg.ConsoleURL),
-		avatarsdkgo.WithIngressEndpointURL(cfg.IngressURL),
-		avatarsdkgo.WithAvatarID(cfg.AvatarID),
-		avatarsdkgo.WithExpireAt(time.Now().Add(sessionTTL).UTC()),
-		avatarsdkgo.WithTransportFrames(collector.transportFrame),
-		avatarsdkgo.WithOnError(collector.onError),
-		avatarsdkgo.WithOnClose(collector.onClose),
+	session := spatiussdkgo.NewAvatarSession(
+		spatiussdkgo.WithAPIKey(cfg.APIKey),
+		spatiussdkgo.WithAppID(cfg.AppID),
+		spatiussdkgo.WithUseQueryAuth(cfg.UseQueryAuth),
+		spatiussdkgo.WithConsoleEndpointURL(cfg.ConsoleURL),
+		spatiussdkgo.WithIngressEndpointURL(cfg.IngressURL),
+		spatiussdkgo.WithAvatarID(cfg.AvatarID),
+		spatiussdkgo.WithExpireAt(time.Now().Add(sessionTTL).UTC()),
+		spatiussdkgo.WithTransportFrames(collector.transportFrame),
+		spatiussdkgo.WithOnError(collector.onError),
+		spatiussdkgo.WithOnClose(collector.onClose),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)

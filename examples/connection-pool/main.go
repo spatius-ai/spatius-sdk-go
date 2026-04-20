@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	avatarsdkgo "github.com/spatialwalk/avatar-sdk-go"
+	spatiussdkgo "github.com/spatius-ai/spatius-sdk-go"
 )
 
 // Configuration
@@ -151,7 +151,7 @@ func (c *AnimationCollector) getFrames() [][]byte {
 
 // PooledConnection represents a pooled avatar session with its collector.
 type PooledConnection struct {
-	Session      *avatarsdkgo.AvatarSession
+	Session      *spatiussdkgo.AvatarSession
 	Collector    *AnimationCollector
 	ConnectionID string
 	CreatedAt    time.Time
@@ -161,7 +161,7 @@ type PooledConnection struct {
 // AvatarConnectionPool manages a pool of avatar session connections.
 type AvatarConnectionPool struct {
 	poolSize      int
-	configFactory func(*AnimationCollector) []avatarsdkgo.SessionOption
+	configFactory func(*AnimationCollector) []spatiussdkgo.SessionOption
 	sessionTTL    time.Duration
 
 	available      chan *PooledConnection
@@ -174,7 +174,7 @@ type AvatarConnectionPool struct {
 // NewAvatarConnectionPool creates a new connection pool.
 func NewAvatarConnectionPool(
 	poolSize int,
-	configFactory func(*AnimationCollector) []avatarsdkgo.SessionOption,
+	configFactory func(*AnimationCollector) []spatiussdkgo.SessionOption,
 	sessionTTL time.Duration,
 ) *AvatarConnectionPool {
 	return &AvatarConnectionPool{
@@ -251,9 +251,9 @@ func (p *AvatarConnectionPool) createConnection(ctx context.Context, index int) 
 	opts := p.configFactory(collector)
 
 	// Override expire_at with pool TTL
-	opts = append(opts, avatarsdkgo.WithExpireAt(time.Now().Add(p.sessionTTL).UTC()))
+	opts = append(opts, spatiussdkgo.WithExpireAt(time.Now().Add(p.sessionTTL).UTC()))
 
-	session := avatarsdkgo.NewAvatarSession(opts...)
+	session := spatiussdkgo.NewAvatarSession(opts...)
 
 	if err := session.Init(ctx); err != nil {
 		return nil, err
@@ -629,17 +629,17 @@ func main() {
 	fmt.Printf("Loaded audio file: %d bytes\n", len(audio))
 
 	// Config factory that creates session config with collector callbacks
-	configFactory := func(collector *AnimationCollector) []avatarsdkgo.SessionOption {
-		return []avatarsdkgo.SessionOption{
-			avatarsdkgo.WithAPIKey(cfg.apiKey),
-			avatarsdkgo.WithAppID(cfg.appID),
-			avatarsdkgo.WithUseQueryAuth(cfg.useQueryAuth),
-			avatarsdkgo.WithConsoleEndpointURL(cfg.consoleURL),
-			avatarsdkgo.WithIngressEndpointURL(cfg.ingressURL),
-			avatarsdkgo.WithAvatarID(cfg.avatarID),
-			avatarsdkgo.WithTransportFrames(collector.transportFrame),
-			avatarsdkgo.WithOnError(collector.onError),
-			avatarsdkgo.WithOnClose(collector.onClose),
+	configFactory := func(collector *AnimationCollector) []spatiussdkgo.SessionOption {
+		return []spatiussdkgo.SessionOption{
+			spatiussdkgo.WithAPIKey(cfg.apiKey),
+			spatiussdkgo.WithAppID(cfg.appID),
+			spatiussdkgo.WithUseQueryAuth(cfg.useQueryAuth),
+			spatiussdkgo.WithConsoleEndpointURL(cfg.consoleURL),
+			spatiussdkgo.WithIngressEndpointURL(cfg.ingressURL),
+			spatiussdkgo.WithAvatarID(cfg.avatarID),
+			spatiussdkgo.WithTransportFrames(collector.transportFrame),
+			spatiussdkgo.WithOnError(collector.onError),
+			spatiussdkgo.WithOnClose(collector.onClose),
 		}
 	}
 
