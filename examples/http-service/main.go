@@ -50,6 +50,7 @@ type audioAsset struct {
 type sdkConfig struct {
 	apiKey             string
 	appID              string
+	region             string
 	consoleEndpointURL string
 	ingressEndpointURL string
 	avatarID           string
@@ -259,6 +260,7 @@ func (s *server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	session := spatiussdkgo.NewAvatarSession(
 		spatiussdkgo.WithAPIKey(s.sdkConfig.apiKey),
 		spatiussdkgo.WithAppID(s.sdkConfig.appID),
+		spatiussdkgo.WithRegion(s.sdkConfig.region),
 		spatiussdkgo.WithConsoleEndpointURL(s.sdkConfig.consoleEndpointURL),
 		spatiussdkgo.WithIngressEndpointURL(s.sdkConfig.ingressEndpointURL),
 		spatiussdkgo.WithAvatarID(s.sdkConfig.avatarID),
@@ -374,6 +376,7 @@ func loadSDKConfig() (sdkConfig, error) {
 	cfg := sdkConfig{
 		apiKey:             strings.TrimSpace(os.Getenv("AVATAR_API_KEY")),
 		appID:              strings.TrimSpace(os.Getenv("AVATAR_APP_ID")),
+		region:             strings.TrimSpace(os.Getenv("AVATAR_REGION")),
 		consoleEndpointURL: strings.TrimSpace(os.Getenv("AVATAR_CONSOLE_ENDPOINT")),
 		ingressEndpointURL: strings.TrimSpace(os.Getenv("AVATAR_INGRESS_ENDPOINT")),
 		avatarID:           strings.TrimSpace(os.Getenv("AVATAR_SESSION_AVATAR_ID")),
@@ -385,12 +388,6 @@ func loadSDKConfig() (sdkConfig, error) {
 	}
 	if cfg.appID == "" {
 		missing = append(missing, "AVATAR_APP_ID")
-	}
-	if cfg.consoleEndpointURL == "" {
-		missing = append(missing, "AVATAR_CONSOLE_ENDPOINT")
-	}
-	if cfg.ingressEndpointURL == "" {
-		missing = append(missing, "AVATAR_INGRESS_ENDPOINT")
 	}
 	if cfg.avatarID == "" {
 		missing = append(missing, "AVATAR_SESSION_AVATAR_ID")

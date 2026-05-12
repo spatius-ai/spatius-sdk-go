@@ -39,6 +39,7 @@ type sdkConfig struct {
 	apiKey       string
 	appID        string
 	useQueryAuth bool
+	region       string
 	consoleURL   string
 	ingressURL   string
 	avatarID     string
@@ -634,6 +635,7 @@ func main() {
 			spatiussdkgo.WithAPIKey(cfg.apiKey),
 			spatiussdkgo.WithAppID(cfg.appID),
 			spatiussdkgo.WithUseQueryAuth(cfg.useQueryAuth),
+			spatiussdkgo.WithRegion(cfg.region),
 			spatiussdkgo.WithConsoleEndpointURL(cfg.consoleURL),
 			spatiussdkgo.WithIngressEndpointURL(cfg.ingressURL),
 			spatiussdkgo.WithAvatarID(cfg.avatarID),
@@ -693,6 +695,7 @@ func loadConfig() (*sdkConfig, error) {
 		apiKey:       strings.TrimSpace(os.Getenv("AVATAR_API_KEY")),
 		appID:        strings.TrimSpace(os.Getenv("AVATAR_APP_ID")),
 		useQueryAuth: strings.ToLower(strings.TrimSpace(os.Getenv("AVATAR_USE_QUERY_AUTH"))) == "true" || os.Getenv("AVATAR_USE_QUERY_AUTH") == "1",
+		region:       strings.TrimSpace(os.Getenv("AVATAR_REGION")),
 		consoleURL:   strings.TrimSpace(os.Getenv("AVATAR_CONSOLE_ENDPOINT")),
 		ingressURL:   strings.TrimSpace(os.Getenv("AVATAR_INGRESS_ENDPOINT")),
 		avatarID:     strings.TrimSpace(os.Getenv("AVATAR_SESSION_AVATAR_ID")),
@@ -704,12 +707,6 @@ func loadConfig() (*sdkConfig, error) {
 	}
 	if cfg.appID == "" {
 		missing = append(missing, "AVATAR_APP_ID")
-	}
-	if cfg.consoleURL == "" {
-		missing = append(missing, "AVATAR_CONSOLE_ENDPOINT")
-	}
-	if cfg.ingressURL == "" {
-		missing = append(missing, "AVATAR_INGRESS_ENDPOINT")
 	}
 	if cfg.avatarID == "" {
 		missing = append(missing, "AVATAR_SESSION_AVATAR_ID")

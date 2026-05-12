@@ -1,11 +1,18 @@
 package spatiussdkgo
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // AudioFormat identifies the audio encoding negotiated for a session.
 type AudioFormat string
 
 const (
+	// DefaultRegion is used when no region is provided.
+	DefaultRegion = "us-west"
+
 	// AudioFormatPCMS16LE sends mono 16-bit PCM bytes.
 	AudioFormatPCMS16LE AudioFormat = "pcm_s16le"
 	// AudioFormatOggOpus sends one continuous Ogg Opus stream per request ID.
@@ -45,6 +52,7 @@ type SessionConfig struct {
 	TransportFrames    func([]byte, bool)
 	OnError            func(error)
 	OnClose            func()
+	Region             string
 	ConsoleEndpointURL string
 	IngressEndpointURL string
 	LiveKitEgress      *LiveKitEgressConfig // If set, enables LiveKit egress mode - audio and animation are streamed to a LiveKit room via the egress service
@@ -94,6 +102,25 @@ func defaultSessionConfig() *SessionConfig {
 		SampleRate:      16000,
 		Bitrate:         0,
 		AudioFormat:     AudioFormatPCMS16LE,
+		Region:          DefaultRegion,
+	}
+}
+
+func (cfg *SessionConfig) applyEndpointDefaults() {
+	region := strings.TrimSpace(cfg.Region)
+	if region == "" {
+		region = DefaultRegion
+	}
+
+	cfg.Region = region
+	cfg.ConsoleEndpointURL = strings.TrimSpace(cfg.ConsoleEndpointURL)
+	cfg.IngressEndpointURL = strings.TrimSpace(cfg.IngressEndpointURL)
+
+	if cfg.ConsoleEndpointURL == "" {
+		cfg.ConsoleEndpointURL = fmt.Sprintf("https://console.%s.spatius.ai/v1/console", region)
+	}
+	if cfg.IngressEndpointURL == "" {
+		cfg.IngressEndpointURL = fmt.Sprintf("wss://api.%s.spatius.ai/v2/driveningress", region)
 	}
 }
 
@@ -115,6 +142,14 @@ func WithAPIKey(apiKey string) SessionOption {
 func WithAppID(appID string) SessionOption {
 	return func(cfg *SessionConfig) {
 		cfg.AppID = appID
+	}
+}
+
+// WithRegion sets the Spatius region used to compose endpoint URLs.
+// Explicit console or ingress endpoint URLs override the region-derived defaults.
+func WithRegion(region string) SessionOption {
+	return func(cfg *SessionConfig) {
+		cfg.Region = region
 	}
 }
 

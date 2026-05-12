@@ -38,6 +38,7 @@ func TestSessionOptionOverrides(t *testing.T) {
 		WithAvatarID("avatar-123"),
 		WithAPIKey("api-key"),
 		WithAppID("app-id"),
+		WithRegion("us-east"),
 		WithUseQueryAuth(true),
 		WithExpireAt(expireAt),
 		WithSampleRate(24000),
@@ -77,6 +78,9 @@ func TestSessionOptionOverrides(t *testing.T) {
 	}
 	if cfg.AppID != "app-id" {
 		t.Fatalf("expected AppID to be set, got %q", cfg.AppID)
+	}
+	if cfg.Region != "us-east" {
+		t.Fatalf("expected Region to be set, got %q", cfg.Region)
 	}
 	if !cfg.UseQueryAuth {
 		t.Fatal("expected UseQueryAuth to be true")
@@ -190,6 +194,9 @@ func TestSessionOptionDefaults(t *testing.T) {
 	if cfg.UseQueryAuth {
 		t.Fatal("expected default UseQueryAuth to be false")
 	}
+	if cfg.Region != DefaultRegion {
+		t.Fatalf("expected default Region to be %q, got %q", DefaultRegion, cfg.Region)
+	}
 	if cfg.LiveKitEgress != nil {
 		t.Fatal("expected default LiveKitEgress to be nil")
 	}
@@ -198,6 +205,37 @@ func TestSessionOptionDefaults(t *testing.T) {
 	cfg.TransportFrames([]byte("noop"), false)
 	cfg.OnError(nil)
 	cfg.OnClose()
+}
+
+func TestNewAvatarSessionAppliesRegionEndpointDefaults(t *testing.T) {
+	session := NewAvatarSession(WithRegion("us-east"))
+	cfg := session.Config()
+
+	if cfg.Region != "us-east" {
+		t.Fatalf("expected Region to be us-east, got %q", cfg.Region)
+	}
+	if cfg.ConsoleEndpointURL != "https://console.us-east.spatius.ai/v1/console" {
+		t.Fatalf("unexpected console endpoint URL: %q", cfg.ConsoleEndpointURL)
+	}
+	if cfg.IngressEndpointURL != "wss://api.us-east.spatius.ai/v2/driveningress" {
+		t.Fatalf("unexpected ingress endpoint URL: %q", cfg.IngressEndpointURL)
+	}
+}
+
+func TestNewAvatarSessionEndpointOverridesWinOverRegion(t *testing.T) {
+	session := NewAvatarSession(
+		WithRegion("us-east"),
+		WithConsoleEndpointURL("https://console.example.com/v1/console"),
+		WithIngressEndpointURL("wss://api.example.com/v2/driveningress"),
+	)
+	cfg := session.Config()
+
+	if cfg.ConsoleEndpointURL != "https://console.example.com/v1/console" {
+		t.Fatalf("expected explicit console endpoint URL, got %q", cfg.ConsoleEndpointURL)
+	}
+	if cfg.IngressEndpointURL != "wss://api.example.com/v2/driveningress" {
+		t.Fatalf("expected explicit ingress endpoint URL, got %q", cfg.IngressEndpointURL)
+	}
 }
 
 func TestNilHandlersUseNoopDefaults(t *testing.T) {

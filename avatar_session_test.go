@@ -305,10 +305,11 @@ func TestAvatarSessionInitNilConfig(t *testing.T) {
 }
 
 func TestAvatarSessionInitMissingConsoleEndpoint(t *testing.T) {
-	session := NewAvatarSession(
-		WithAPIKey("api-key"),
-		WithExpireAt(time.Now().Add(5*time.Minute)),
-	)
+	session := &AvatarSession{config: defaultSessionConfig()}
+	session.config.APIKey = "api-key"
+	session.config.ExpireAt = time.Now().Add(5 * time.Minute)
+	session.config.ConsoleEndpointURL = ""
+
 	err := session.Init(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "missing console endpoint URL") {
 		t.Fatalf("expected missing console endpoint URL error, got %v", err)
@@ -430,10 +431,10 @@ func TestAvatarSessionStartAlreadyStarted(t *testing.T) {
 }
 
 func TestAvatarSessionStartMissingIngressEndpoint(t *testing.T) {
-	session := NewAvatarSession(
-		WithAvatarID("avatar-123"),
-		WithAppID("app-123"),
-	)
+	session := &AvatarSession{config: defaultSessionConfig()}
+	session.config.AvatarID = "avatar-123"
+	session.config.AppID = "app-123"
+	session.config.IngressEndpointURL = ""
 	session.sessionToken = "token"
 
 	_, err := session.Start(context.Background())

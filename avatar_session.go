@@ -42,6 +42,7 @@ func NewAvatarSession(opts ...SessionOption) *AvatarSession {
 			opt(cfg)
 		}
 	}
+	cfg.applyEndpointDefaults()
 	return &AvatarSession{config: cfg}
 }
 
