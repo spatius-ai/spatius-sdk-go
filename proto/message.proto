@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package message;
+
+option go_package = "github.com/spatius-ai/spatius-sdk-go/proto/generated";
+
+enum MessageType {
+  MESSAGE_UNSPECIFIED = 0;
+  MESSAGE_CLIENT_CONFIGURE_SESSION = 1; // 协商会话参数
+  MESSAGE_SERVER_CONFIRM_SESSION = 2; // 确认协商成功
+  MESSAGE_CLIENT_AUDIO_INPUT = 3;
+  MESSAGE_SERVER_ERROR = 4;
+  MESSAGE_SERVER_RESPONSE_ANIMATION = 5;
+  MESSAGE_CLIENT_INTERRUPT = 7; // 打断
+}
+
+enum AudioFormat {
+  AUDIO_FORMAT_PCM_S16LE = 0;
+  AUDIO_FORMAT_OGG_OPUS = 1;
+}
+
+enum TransportCompression {
+  TRANSPORT_COMPRESSION_NONE = 0;
+}
+
+// EgressType specifies how animation and audio data should be delivered
+enum EgressType {
+  EGRESS_TYPE_UNSPECIFIED = 0; // Default: return animation data via WebSocket
+  EGRESS_TYPE_LIVEKIT = 1;     // Stream to LiveKit room via egress service
+  EGRESS_TYPE_AGORA = 2;       // Stream to Agora channel via egress service
+}
+
+// LiveKitEgressConfig contains configuration for streaming to a LiveKit room
+message LiveKitEgressConfig {
+  // LiveKit server URL (e.g., wss://livekit.example.com)
+  string url = 1;
+  // Deprecated: use api_token instead. Optional when api_token is provided.
+  string api_key = 2;
+  // Deprecated: use api_token instead. Optional when api_token is provided.
+  string api_secret = 3;
+  // LiveKit room name to join
+  string room_name = 4;
+  // Publisher identity in the room
+  string publisher_id = 5;
+  // Extra participant attributes passed to LiveKit
+  map<string, string> extra_attributes = 6;
+  // Idle timeout in seconds. Server closes the connection when it is completely silent.
+  int32 idle_timeout = 7;
+  // Pre-generated LiveKit access token. Preferred over api_key/api_secret when set.
+  string api_token = 8;
+}
+
+// AgoraEgressConfig contains configuration for streaming to an Agora channel
+message AgoraEgressConfig {
+  // Agora channel name to join
+  string channel_name = 1;
+  // Agora token for authentication (optional for testing)
+  string token = 2;
+  // Publisher UID in the channel (0 for auto-assign)
+  uint32 uid = 3;
+  // Publisher identity/name
+  string publisher_id = 4;
+}
+
+message ClientConfigureSession {
+  int32 sample_rate = 1;
+  int32 bitrate = 2;
+  AudioFormat audio_format = 3;
+  TransportCompression transport_compression = 4;
+  // Egress configuration (optional)
+  // If egress_type is UNSPECIFIED or not set, animation data is returned via WebSocket
+  EgressType egress_type = 5;
+  // LiveKit egress configuration (required when egress_type is EGRESS_TYPE_LIVEKIT)
+  LiveKitEgressConfig livekit_egress = 6;
+  // Agora egress configuration (required when egress_type is EGRESS_TYPE_AGORA)
+  AgoraEgressConfig agora_egress = 7;
+}
+
+message ServerConfirmSession {
+  string connection_id = 1;
+}
+
+message ClientAudioInput {
+  string req_id = 1;
+  bool end = 2;
+  bytes audio = 3;
+}
+
+message ServerError {
+  string connection_id = 1;
+  string req_id = 2;
+  int32 code = 3;
+  string message = 4;
+}
+
+message ServerResponseAnimation {
+  string connection_id = 1;
+  string req_id = 2;
+  bool end = 3;
+}
+
+message ClientInterrupt {
+  string req_id = 1;
+}
+
+message Message {
+  MessageType type = 1;
+  oneof data {
+    ClientConfigureSession client_configure_session = 2;
+    ServerConfirmSession server_confirm_session = 3;
+    ClientAudioInput client_audio_input = 4;
+    ServerError server_error = 5;
+    ServerResponseAnimation server_response_animation = 6;
+    ClientInterrupt client_interrupt = 8;
+  }
+}

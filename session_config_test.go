@@ -1,0 +1,271 @@
+package spatiussdkgo
+
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+func TestSessionOptionOverrides(t *testing.T) {
+	cfg := defaultSessionConfig()
+
+	expireAt := time.Now().Add(5 * time.Minute)
+	var framesCalled bool
+	var onErrorCalled bool
+	var onCloseCalled bool
+	var encodedAudioCalled bool
+
+	frameHandler := func(data []byte, end bool) {
+		framesCalled = true
+		if string(data) != "payload" {
+			t.Fatalf("unexpected frame payload: %s, end: %v", string(data), end)
+		}
+	}
+
+	errSentinel := errors.New("boom")
+	errorHandler := func(err error) {
+		onErrorCalled = err == errSentinel
+	}
+
+	closeHandler := func() {
+		onCloseCalled = true
+	}
+	encodedAudioHandler := func(reqID string, payload []byte) {
+		encodedAudioCalled = reqID == "req-123" && string(payload) == "encoded"
+	}
+
+	opts := []SessionOption{
+		WithAvatarID("avatar-123"),
+		WithAPIKey("api-key"),
+		WithAppID("app-id"),
+		WithRegion("us-east"),
+		WithUseQueryAuth(true),
+		WithExpireAt(expireAt),
+		WithSampleRate(24000),
+		WithBitrate(128),
+		WithAudioFormat(AudioFormatOggOpus),
+		WithOggOpusEncoder(&OggOpusEncoderConfig{
+			FrameDurationMS: 40,
+			Application:     OggOpusApplicationVoIP,
+		}),
+		WithOnEncodedAudio(encodedAudioHandler),
+		WithTransportFrames(frameHandler),
+		WithOnError(errorHandler),
+		WithOnClose(closeHandler),
+		WithConsoleEndpointURL("https://console.test"),
+		WithIngressEndpointURL("https://ingress.test"),
+		WithLiveKitEgress(&LiveKitEgressConfig{
+			URL:             "wss://livekit.example.com",
+			APIKey:          "api-key",
+			APISecret:       "api-secret",
+			APIToken:        "api-token",
+			RoomName:        "test-room",
+			PublisherID:     "publisher-123",
+			ExtraAttributes: map[string]string{"role": "avatar", "locale": "en-US"},
+			IdleTimeout:     120,
+		}),
+	}
+
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	if cfg.AvatarID != "avatar-123" {
+		t.Fatalf("expected AvatarID to be set, got %q", cfg.AvatarID)
+	}
+	if cfg.APIKey != "api-key" {
+		t.Fatalf("expected APIKey to be set, got %q", cfg.APIKey)
+	}
+	if cfg.AppID != "app-id" {
+		t.Fatalf("expected AppID to be set, got %q", cfg.AppID)
+	}
+	if cfg.Region != "us-east" {
+		t.Fatalf("expected Region to be set, got %q", cfg.Region)
+	}
+	if !cfg.UseQueryAuth {
+		t.Fatal("expected UseQueryAuth to be true")
+	}
+	if !cfg.ExpireAt.Equal(expireAt) {
+		t.Fatalf("expected ExpireAt to be %v, got %v", expireAt, cfg.ExpireAt)
+	}
+	if cfg.SampleRate != 24000 {
+		t.Fatalf("expected SampleRate to be 24000, got %d", cfg.SampleRate)
+	}
+	if cfg.Bitrate != 128 {
+		t.Fatalf("expected Bitrate to be 128, got %d", cfg.Bitrate)
+	}
+	if cfg.AudioFormat != AudioFormatOggOpus {
+		t.Fatalf("expected AudioFormat to be %q, got %q", AudioFormatOggOpus, cfg.AudioFormat)
+	}
+	if cfg.OggOpusEncoder == nil {
+		t.Fatal("expected OggOpusEncoder to be set")
+	}
+	if cfg.OggOpusEncoder.FrameDurationMS != 40 {
+		t.Fatalf("expected FrameDurationMS to be 40, got %d", cfg.OggOpusEncoder.FrameDurationMS)
+	}
+	if cfg.OggOpusEncoder.Application != OggOpusApplicationVoIP {
+		t.Fatalf("expected Application to be %q, got %q", OggOpusApplicationVoIP, cfg.OggOpusEncoder.Application)
+	}
+	if cfg.ConsoleEndpointURL != "https://console.test" {
+		t.Fatalf("expected ConsoleEndpointURL to be set, got %q", cfg.ConsoleEndpointURL)
+	}
+	if cfg.IngressEndpointURL != "https://ingress.test" {
+		t.Fatalf("expected IngressEndpointURL to be set, got %q", cfg.IngressEndpointURL)
+	}
+	if cfg.LiveKitEgress == nil {
+		t.Fatal("expected LiveKitEgress to be set")
+	}
+	if cfg.LiveKitEgress.URL != "wss://livekit.example.com" {
+		t.Fatalf("expected LiveKitEgress.URL to be set, got %q", cfg.LiveKitEgress.URL)
+	}
+	if cfg.LiveKitEgress.APIToken != "api-token" {
+		t.Fatalf("expected LiveKitEgress.APIToken to be set, got %q", cfg.LiveKitEgress.APIToken)
+	}
+	if cfg.LiveKitEgress.RoomName != "test-room" {
+		t.Fatalf("expected LiveKitEgress.RoomName to be set, got %q", cfg.LiveKitEgress.RoomName)
+	}
+	if cfg.LiveKitEgress.ExtraAttributes["role"] != "avatar" {
+		t.Fatalf("expected LiveKitEgress.ExtraAttributes.role to be 'avatar', got %q", cfg.LiveKitEgress.ExtraAttributes["role"])
+	}
+	if cfg.LiveKitEgress.IdleTimeout != 120 {
+		t.Fatalf("expected LiveKitEgress.IdleTimeout to be 120, got %d", cfg.LiveKitEgress.IdleTimeout)
+	}
+
+	if cfg.TransportFrames == nil {
+		t.Fatal("TransportFrames handler should not be nil")
+	}
+	cfg.TransportFrames([]byte("payload"), false)
+	if !framesCalled {
+		t.Fatal("TransportFrames handler was not invoked")
+	}
+
+	if cfg.OnError == nil {
+		t.Fatal("OnError handler should not be nil")
+	}
+	cfg.OnError(errSentinel)
+	if !onErrorCalled {
+		t.Fatal("OnError handler was not invoked with sentinel error")
+	}
+
+	if cfg.OnClose == nil {
+		t.Fatal("OnClose handler should not be nil")
+	}
+	cfg.OnClose()
+	if !onCloseCalled {
+		t.Fatal("OnClose handler was not invoked")
+	}
+
+	if cfg.OnEncodedAudio == nil {
+		t.Fatal("OnEncodedAudio handler should not be nil")
+	}
+	cfg.OnEncodedAudio("req-123", []byte("encoded"))
+	if !encodedAudioCalled {
+		t.Fatal("OnEncodedAudio handler was not invoked")
+	}
+}
+
+func TestSessionOptionDefaults(t *testing.T) {
+	cfg := defaultSessionConfig()
+
+	if cfg.TransportFrames == nil {
+		t.Fatal("default TransportFrames should be non-nil")
+	}
+	if cfg.OnError == nil {
+		t.Fatal("default OnError should be non-nil")
+	}
+	if cfg.OnClose == nil {
+		t.Fatal("default OnClose should be non-nil")
+	}
+	if cfg.SampleRate != 16000 {
+		t.Fatalf("expected default SampleRate to be 16000, got %d", cfg.SampleRate)
+	}
+	if cfg.Bitrate != 0 {
+		t.Fatalf("expected default Bitrate to be 0, got %d", cfg.Bitrate)
+	}
+	if cfg.AudioFormat != AudioFormatPCMS16LE {
+		t.Fatalf("expected default AudioFormat to be %q, got %q", AudioFormatPCMS16LE, cfg.AudioFormat)
+	}
+	if cfg.OggOpusEncoder != nil {
+		t.Fatal("expected default OggOpusEncoder to be nil")
+	}
+	if cfg.OnEncodedAudio != nil {
+		t.Fatal("expected default OnEncodedAudio to be nil")
+	}
+	if cfg.UseQueryAuth {
+		t.Fatal("expected default UseQueryAuth to be false")
+	}
+	if cfg.Region != DefaultRegion {
+		t.Fatalf("expected default Region to be %q, got %q", DefaultRegion, cfg.Region)
+	}
+	if cfg.LiveKitEgress != nil {
+		t.Fatal("expected default LiveKitEgress to be nil")
+	}
+
+	// Ensure default handlers do not panic.
+	cfg.TransportFrames([]byte("noop"), false)
+	cfg.OnError(nil)
+	cfg.OnClose()
+}
+
+func TestNewAvatarSessionAppliesRegionEndpointDefaults(t *testing.T) {
+	session := NewAvatarSession(WithRegion("us-east"))
+	cfg := session.Config()
+
+	if cfg.Region != "us-east" {
+		t.Fatalf("expected Region to be us-east, got %q", cfg.Region)
+	}
+	if cfg.ConsoleEndpointURL != "https://console.us-east.spatius.ai/v1/console" {
+		t.Fatalf("unexpected console endpoint URL: %q", cfg.ConsoleEndpointURL)
+	}
+	if cfg.IngressEndpointURL != "wss://api.us-east.spatius.ai/v2/driveningress" {
+		t.Fatalf("unexpected ingress endpoint URL: %q", cfg.IngressEndpointURL)
+	}
+}
+
+func TestNewAvatarSessionEndpointOverridesWinOverRegion(t *testing.T) {
+	session := NewAvatarSession(
+		WithRegion("us-east"),
+		WithConsoleEndpointURL("https://console.example.com/v1/console"),
+		WithIngressEndpointURL("wss://api.example.com/v2/driveningress"),
+	)
+	cfg := session.Config()
+
+	if cfg.ConsoleEndpointURL != "https://console.example.com/v1/console" {
+		t.Fatalf("expected explicit console endpoint URL, got %q", cfg.ConsoleEndpointURL)
+	}
+	if cfg.IngressEndpointURL != "wss://api.example.com/v2/driveningress" {
+		t.Fatalf("expected explicit ingress endpoint URL, got %q", cfg.IngressEndpointURL)
+	}
+}
+
+func TestNilHandlersUseNoopDefaults(t *testing.T) {
+	cfg := defaultSessionConfig()
+
+	WithTransportFrames(nil)(cfg)
+	if cfg.TransportFrames == nil {
+		t.Fatal("TransportFrames should default to a no-op handler")
+	}
+	safeInvoke(t, func() { cfg.TransportFrames(nil, false) })
+
+	WithOnError(nil)(cfg)
+	if cfg.OnError == nil {
+		t.Fatal("OnError should default to a no-op handler")
+	}
+	safeInvoke(t, func() { cfg.OnError(nil) })
+
+	WithOnClose(nil)(cfg)
+	if cfg.OnClose == nil {
+		t.Fatal("OnClose should default to a no-op handler")
+	}
+	safeInvoke(t, cfg.OnClose)
+}
+
+func safeInvoke(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("handler panic: %v", r)
+		}
+	}()
+	fn()
+}
