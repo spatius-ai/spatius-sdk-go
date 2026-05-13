@@ -32,7 +32,6 @@ func main() {
 		spatius.WithAPIKey("your-api-key"),
 		spatius.WithAppID("your-app-id"),
 		spatius.WithAvatarID("your-avatar-id"),
-		spatius.WithRegion("us-west"),
 		spatius.WithExpireAt(time.Now().Add(5*time.Minute).UTC()),
 		spatius.WithTransportFrames(func(data []byte, last bool) {
 			// Handle animation frame bytes.
@@ -55,20 +54,6 @@ func main() {
 	}
 	log.Printf("sent request %s", reqID)
 }
-```
-
-`WithRegion` defaults to `us-west`. It composes:
-
-- Console endpoint: `https://console.<region>.spatius.ai/v1/console`
-- Ingress endpoint: `wss://api.<region>.spatius.ai/v2/driveningress`
-
-Explicit endpoint URLs still override region:
-
-```go
-session := spatius.NewAvatarSession(
-	spatius.WithConsoleEndpointURL("https://console.example.com/v1/console"),
-	spatius.WithIngressEndpointURL("wss://api.example.com/v2/driveningress"),
-)
 ```
 
 Detailed usage lives in [Spatius docs](https://docs.spatius.ai/sdk-reference/go-sdk/go-sdk).
