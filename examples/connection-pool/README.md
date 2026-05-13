@@ -25,6 +25,7 @@ export AVATAR_SESSION_AVATAR_ID="your-avatar-id"
 export AVATAR_REGION="us-west"
 export AVATAR_CONSOLE_ENDPOINT="https://console.example.com/v1/console"
 export AVATAR_INGRESS_ENDPOINT="wss://api.example.com/v2/driveningress"
+export AVATAR_AUDIO_FILE="../../tests/fixtures/audio/audio.pcm"
 export AVATAR_USE_QUERY_AUTH="false"  # Set to "true" for web-style auth
 ```
 

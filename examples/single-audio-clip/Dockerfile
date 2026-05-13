@@ -15,7 +15,8 @@ FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 
 COPY --from=builder /workspace/bin/single-audio-clip /app/single-audio-clip
-COPY audio.pcm /app/audio.pcm
+COPY tests/fixtures/audio/audio.pcm /app/audio.pcm
+
+ENV AVATAR_AUDIO_FILE=/app/audio.pcm
 
 ENTRYPOINT ["/app/single-audio-clip"]
-

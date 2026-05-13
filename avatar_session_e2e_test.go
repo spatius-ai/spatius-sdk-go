@@ -95,7 +95,7 @@ func TestAvatarSessionEndToEnd(t *testing.T) {
 	ingressEndpoint := envOrSkip(t, "AVATAR_INGRESS_ENDPOINT")
 	avatarID := envOrSkip(t, "AVATAR_SESSION_AVATAR_ID")
 
-	audioPath := filepath.Join("audio.pcm")
+	audioPath := filepath.Join("tests", "fixtures", "audio", "audio.pcm")
 	audioData, err := os.ReadFile(audioPath)
 	if err != nil {
 		t.Fatalf("read audio fixture %q: %v", audioPath, err)

@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	audioFilePath  = "../../audio.pcm"
+	audioFilePath  = "../../tests/fixtures/audio/audio.pcm"
 	requestTimeout = 45 * time.Second
 	sessionTTL     = 2 * time.Minute
 )
@@ -61,7 +61,7 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
-	audio, err := loadAudio(audioFilePath)
+	audio, err := loadAudio(configuredAudioFilePath())
 	if err != nil {
 		log.Fatalf("audio fixture error: %v", err)
 	}
@@ -178,6 +178,13 @@ func loadConfig() (*serverConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func configuredAudioFilePath() string {
+	if path := strings.TrimSpace(os.Getenv("AVATAR_AUDIO_FILE")); path != "" {
+		return path
+	}
+	return audioFilePath
 }
 
 func loadAudio(path string) ([]byte, error) {

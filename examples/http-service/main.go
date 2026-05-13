@@ -2,7 +2,7 @@
 //
 // This example exposes a simple HTTP API that:
 // - Accepts a POST request with a desired sample rate
-// - Returns a PCM audio clip at that sample rate (loaded from audio_{rate}.pcm)
+// - Returns a PCM audio clip at that sample rate (loaded from tests/fixtures/audio/audio_{rate}.pcm)
 // - Uses the SDK to make a real request to the avatar service and returns:
 //   - The audio bytes (base64 in JSON)
 //   - The list of base64-encoded protobuf Message binaries received from the service
@@ -166,13 +166,14 @@ type server struct {
 
 func main() {
 	repoRoot := "../../" // relative to examples/http-service/
+	audioRoot := filepath.Join(repoRoot, "tests", "fixtures", "audio")
 
-	assets, err := findAudioAssets(repoRoot)
+	assets, err := findAudioAssets(audioRoot)
 	if err != nil {
 		log.Fatalf("failed to find audio assets: %v", err)
 	}
 	if len(assets) == 0 {
-		log.Fatalf("no audio_{rate}.pcm files found in %s", repoRoot)
+		log.Fatalf("no audio_{rate}.pcm files found in %s", audioRoot)
 	}
 
 	cfg, err := loadSDKConfig()

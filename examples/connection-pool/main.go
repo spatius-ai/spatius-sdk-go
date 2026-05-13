@@ -30,7 +30,7 @@ const (
 	concurrentRequests = 5                // Number of concurrent audio requests per round
 	numRounds          = 10               // Number of rounds to run
 	roundInterval      = 30 * time.Second // Seconds between rounds (total ~5 minutes with 10 rounds)
-	audioFilePath      = "../../audio.pcm"
+	audioFilePath      = "../../tests/fixtures/audio/audio.pcm"
 	requestTimeout     = 45 * time.Second
 	sessionTTL         = 10 * time.Minute // Longer for pool reuse over multiple rounds
 )
@@ -623,7 +623,7 @@ func main() {
 	}
 
 	// Load audio file
-	audio, err := loadAudio(audioFilePath)
+	audio, err := loadAudio(configuredAudioFilePath())
 	if err != nil {
 		log.Fatalf("audio fixture error: %v", err)
 	}
@@ -717,6 +717,13 @@ func loadConfig() (*sdkConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func configuredAudioFilePath() string {
+	if path := strings.TrimSpace(os.Getenv("AVATAR_AUDIO_FILE")); path != "" {
+		return path
+	}
+	return audioFilePath
 }
 
 func loadAudio(path string) ([]byte, error) {
