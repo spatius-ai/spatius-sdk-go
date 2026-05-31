@@ -11,7 +11,8 @@ type AudioFormat string
 
 const (
 	// DefaultRegion is used when no region is provided.
-	DefaultRegion = "us-west"
+	DefaultRegion  = "us-west"
+	cnRegionPrefix = "cn-"
 
 	// AudioFormatPCMS16LE sends mono 16-bit PCM bytes.
 	AudioFormatPCMS16LE AudioFormat = "pcm_s16le"
@@ -106,6 +107,21 @@ func defaultSessionConfig() *SessionConfig {
 	}
 }
 
+func endpointDomainForRegion(region string) string {
+	if strings.HasPrefix(region, cnRegionPrefix) {
+		return "spatialwalk.top"
+	}
+	return "spatius.ai"
+}
+
+func consoleEndpointURLForRegion(region string) string {
+	return fmt.Sprintf("https://console.%s.%s/v1/console", region, endpointDomainForRegion(region))
+}
+
+func ingressEndpointURLForRegion(region string) string {
+	return fmt.Sprintf("wss://api.%s.%s/v2/driveningress", region, endpointDomainForRegion(region))
+}
+
 func (cfg *SessionConfig) applyEndpointDefaults() {
 	region := strings.TrimSpace(cfg.Region)
 	if region == "" {
@@ -117,10 +133,10 @@ func (cfg *SessionConfig) applyEndpointDefaults() {
 	cfg.IngressEndpointURL = strings.TrimSpace(cfg.IngressEndpointURL)
 
 	if cfg.ConsoleEndpointURL == "" {
-		cfg.ConsoleEndpointURL = fmt.Sprintf("https://console.%s.spatius.ai/v1/console", region)
+		cfg.ConsoleEndpointURL = consoleEndpointURLForRegion(region)
 	}
 	if cfg.IngressEndpointURL == "" {
-		cfg.IngressEndpointURL = fmt.Sprintf("wss://api.%s.spatius.ai/v2/driveningress", region)
+		cfg.IngressEndpointURL = ingressEndpointURLForRegion(region)
 	}
 }
 

@@ -222,6 +222,21 @@ func TestNewAvatarSessionAppliesRegionEndpointDefaults(t *testing.T) {
 	}
 }
 
+func TestNewAvatarSessionAppliesCNRegionEndpointDefaults(t *testing.T) {
+	session := NewAvatarSession(WithRegion("cn-beijing"))
+	cfg := session.Config()
+
+	if cfg.Region != "cn-beijing" {
+		t.Fatalf("expected Region to be cn-beijing, got %q", cfg.Region)
+	}
+	if cfg.ConsoleEndpointURL != "https://console.cn-beijing.spatialwalk.top/v1/console" {
+		t.Fatalf("unexpected console endpoint URL: %q", cfg.ConsoleEndpointURL)
+	}
+	if cfg.IngressEndpointURL != "wss://api.cn-beijing.spatialwalk.top/v2/driveningress" {
+		t.Fatalf("unexpected ingress endpoint URL: %q", cfg.IngressEndpointURL)
+	}
+}
+
 func TestNewAvatarSessionEndpointOverridesWinOverRegion(t *testing.T) {
 	session := NewAvatarSession(
 		WithRegion("us-east"),
