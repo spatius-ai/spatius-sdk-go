@@ -233,10 +233,15 @@ func (s *AvatarSession) sendClientConfigureSession() error {
 		return errors.New("websocket connection is not established")
 	}
 
+	audioFormat, err := protoAudioFormat(s.config.AudioFormat)
+	if err != nil {
+		return fmt.Errorf("start avatar session: %w", err)
+	}
+
 	clientConfig := &message.ClientConfigureSession{
 		SampleRate:           int32(s.config.SampleRate),
 		Bitrate:              int32(s.config.Bitrate),
-		AudioFormat:          protoAudioFormat(s.config.AudioFormat),
+		AudioFormat:          audioFormat,
 		TransportCompression: message.TransportCompression_TRANSPORT_COMPRESSION_NONE,
 	}
 
@@ -453,6 +458,7 @@ func (s *AvatarSession) Interrupt() (string, error) {
 
 	// Clear current request ID so next SendAudio creates a new one
 	s.currentReqID = ""
+	s.audioEncoder = nil
 
 	return reqID, nil
 }
@@ -462,6 +468,7 @@ func (s *AvatarSession) Close() error {
 	if s == nil {
 		return nil
 	}
+	s.audioEncoder = nil
 	if s.conn != nil {
 		err := s.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		if err != nil {
@@ -588,14 +595,14 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 	}
 }
 
-func protoAudioFormat(audioFormat AudioFormat) message.AudioFormat {
+func protoAudioFormat(audioFormat AudioFormat) (message.AudioFormat, error) {
 	switch audioFormat {
 	case AudioFormatOggOpus:
-		return message.AudioFormat_AUDIO_FORMAT_OGG_OPUS
+		return message.AudioFormat_AUDIO_FORMAT_OGG_OPUS, nil
 	case "", AudioFormatPCMS16LE:
-		return message.AudioFormat_AUDIO_FORMAT_PCM_S16LE
+		return message.AudioFormat_AUDIO_FORMAT_PCM_S16LE, nil
 	default:
-		return message.AudioFormat_AUDIO_FORMAT_PCM_S16LE
+		return message.AudioFormat_AUDIO_FORMAT_PCM_S16LE, fmt.Errorf("unsupported audio format: %s", audioFormat)
 	}
 }
 

@@ -236,6 +236,45 @@ func TestAvatarSessionStartMissingToken(t *testing.T) {
 	}
 }
 
+func TestAvatarSessionStartRejectsUnsupportedAudioFormat(t *testing.T) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("failed to upgrade connection: %v", err)
+		}
+		defer conn.Close() // nolint:errcheck
+
+		_, _, err = conn.ReadMessage()
+		if err == nil {
+			t.Fatal("expected unsupported audio format to fail before handshake message is sent")
+		}
+	}))
+	defer server.Close()
+
+	session := NewAvatarSession(
+		WithAvatarID("avatar-123"),
+		WithAppID("app-123"),
+		WithAudioFormat(AudioFormat("flac")),
+		WithIngressEndpointURL(strings.Replace(server.URL, "http", "ws", 1)),
+	)
+	session.sessionToken = "session-token-123"
+
+	_, err := session.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected Start to reject unsupported audio format")
+	}
+	if !strings.Contains(err.Error(), "unsupported audio format: flac") {
+		t.Fatalf("expected unsupported audio format error, got %v", err)
+	}
+	if session.conn != nil {
+		t.Fatal("expected failed Start to clear websocket connection")
+	}
+}
+
 func TestAvatarSessionStartDialFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -1029,6 +1068,18 @@ func TestAvatarSessionCloseWithNoConnection(t *testing.T) {
 	}
 }
 
+func TestAvatarSessionCloseClearsAudioEncoder(t *testing.T) {
+	session := NewAvatarSession()
+	session.audioEncoder = &OggOpusStreamEncoder{}
+
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	if session.audioEncoder != nil {
+		t.Fatal("expected Close to clear audio encoder")
+	}
+}
+
 func TestAvatarSessionSendAudioNoConnection(t *testing.T) {
 	session := NewAvatarSession()
 	_, err := session.SendAudio([]byte{0x01}, true)
@@ -1290,6 +1341,83 @@ func TestAvatarSessionSendAudioInternalEncoderBuffersUntilFrameReady(t *testing.
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for encoded audio payload")
+	}
+}
+
+func TestAvatarSessionInterruptClearsAudioEncoder(t *testing.T) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+
+	serverConnCh := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("failed to upgrade connection: %v", err)
+		}
+		serverConnCh <- conn
+	}))
+	defer server.Close()
+
+	clientConn, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http", "ws", 1), nil)
+	if err != nil {
+		t.Fatalf("failed to dial websocket server: %v", err)
+	}
+	defer clientConn.Close() // nolint:errcheck
+
+	session := NewAvatarSession()
+	session.conn = clientConn
+	session.lastReqID = "req-123"
+	session.currentReqID = "req-123"
+	session.audioEncoder = &OggOpusStreamEncoder{}
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Fatalf("failed to close session: %v", err)
+		}
+	}()
+
+	serverConn := <-serverConnCh
+	defer serverConn.Close() // nolint:errcheck
+
+	received := make(chan *message.ClientInterrupt, 1)
+	go func() {
+		messageType, payload, err := serverConn.ReadMessage()
+		if err != nil || messageType != websocket.BinaryMessage {
+			return
+		}
+
+		var envelope message.Message
+		if err := proto.Unmarshal(payload, &envelope); err != nil {
+			return
+		}
+
+		received <- envelope.GetClientInterrupt()
+	}()
+
+	reqID, err := session.Interrupt()
+	if err != nil {
+		t.Fatalf("Interrupt returned error: %v", err)
+	}
+	if reqID != "req-123" {
+		t.Fatalf("expected interrupted req id %q, got %q", "req-123", reqID)
+	}
+	if session.currentReqID != "" {
+		t.Fatalf("expected current request id to be cleared, got %q", session.currentReqID)
+	}
+	if session.audioEncoder != nil {
+		t.Fatal("expected Interrupt to clear audio encoder")
+	}
+
+	select {
+	case interrupt := <-received:
+		if interrupt == nil {
+			t.Fatal("expected interrupt payload")
+		}
+		if interrupt.GetReqId() != "req-123" {
+			t.Fatalf("expected interrupt req id %q, got %q", "req-123", interrupt.GetReqId())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for interrupt payload")
 	}
 }
 
