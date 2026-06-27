@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -507,6 +508,64 @@ func formatSessionTokenError(status int, resp *sessionTokenResponse) string {
 	return fmt.Sprintf("Error %d (%s): %s - %s", err.Status, err.Code, err.Title, err.Detail)
 }
 
+type callbackDispatcher struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	queue  []func()
+	closed bool
+}
+
+func newCallbackDispatcher() *callbackDispatcher {
+	d := &callbackDispatcher{}
+	d.cond = sync.NewCond(&d.mu)
+	go d.run()
+	return d
+}
+
+func (d *callbackDispatcher) dispatch(callback func()) {
+	if d == nil || callback == nil {
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		return
+	}
+	d.queue = append(d.queue, callback)
+	d.cond.Signal()
+}
+
+func (d *callbackDispatcher) stop() {
+	if d == nil {
+		return
+	}
+
+	d.mu.Lock()
+	d.closed = true
+	d.cond.Signal()
+	d.mu.Unlock()
+}
+
+func (d *callbackDispatcher) run() {
+	for {
+		d.mu.Lock()
+		for len(d.queue) == 0 && !d.closed {
+			d.cond.Wait()
+		}
+		if len(d.queue) == 0 && d.closed {
+			d.mu.Unlock()
+			return
+		}
+		callback := d.queue[0]
+		d.queue[0] = nil
+		d.queue = d.queue[1:]
+		d.mu.Unlock()
+
+		callback()
+	}
+}
+
 func (s *AvatarSession) readLoop(ctx context.Context) {
 	if s == nil {
 		return
@@ -518,6 +577,8 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 	}
 
 	cfg := s.config
+	callbacks := newCallbackDispatcher()
+	defer callbacks.stop()
 
 	for {
 		if ctx != nil {
@@ -540,7 +601,7 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 
 			if cfg != nil && cfg.OnError != nil {
 				asyncErr := fmt.Errorf("avatar session read loop: read message: %w", err)
-				go cfg.OnError(asyncErr)
+				callbacks.dispatch(func() { cfg.OnError(asyncErr) })
 			}
 
 			_ = s.Close()
@@ -555,7 +616,7 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 		if err := proto.Unmarshal(payload, &envelope); err != nil {
 			if cfg != nil && cfg.OnError != nil {
 				asyncErr := fmt.Errorf("avatar session read loop: decode message: %w", err)
-				go cfg.OnError(asyncErr)
+				callbacks.dispatch(func() { cfg.OnError(asyncErr) })
 			}
 			continue
 		}
@@ -566,13 +627,14 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 				frame := append([]byte(nil), payload...)
 				anim := envelope.GetServerResponseAnimation()
 				last := anim != nil && anim.GetEnd()
-				go cfg.TransportFrames(frame, last)
+				callbacks.dispatch(func() { cfg.TransportFrames(frame, last) })
 			}
 		case message.MessageType_MESSAGE_SERVER_ERROR:
 			if cfg != nil && cfg.OnError != nil {
 				serverErr := envelope.GetServerError()
 				if serverErr == nil {
-					go cfg.OnError(errors.New("avatar session read loop: error message missing payload"))
+					callbackErr := errors.New("avatar session read loop: error message missing payload")
+					callbacks.dispatch(func() { cfg.OnError(callbackErr) })
 					continue
 				}
 				report := newServerAvatarSDKError(
@@ -582,7 +644,7 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 					serverErr.GetConnectionId(),
 					serverErr.GetReqId(),
 				)
-				go cfg.OnError(report)
+				callbacks.dispatch(func() { cfg.OnError(report) })
 			}
 		}
 	}
