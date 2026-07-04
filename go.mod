@@ -9,4 +9,4 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
-require github.com/hraban/opus v0.0.0-20260625065747-1d0df3f46084
+require github.com/hraban/opus v0.0.0-20260704075952-d66b0974eb8f
