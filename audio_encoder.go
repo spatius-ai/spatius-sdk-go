@@ -339,7 +339,7 @@ func resolveOggOpusEncoderConfig(config *OggOpusEncoderConfig) OggOpusEncoderCon
 	if config == nil {
 		return OggOpusEncoderConfig{
 			FrameDurationMS: 20,
-			Application:     OggOpusApplicationAudio,
+			Application:     OggOpusApplicationVoIP,
 		}
 	}
 
@@ -348,7 +348,7 @@ func resolveOggOpusEncoderConfig(config *OggOpusEncoderConfig) OggOpusEncoderCon
 		resolved.FrameDurationMS = 20
 	}
 	if strings.TrimSpace(string(resolved.Application)) == "" {
-		resolved.Application = OggOpusApplicationAudio
+		resolved.Application = OggOpusApplicationVoIP
 	}
 
 	return resolved

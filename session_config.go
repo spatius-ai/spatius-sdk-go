@@ -210,7 +210,7 @@ func WithOggOpusEncoder(config *OggOpusEncoderConfig) SessionOption {
 		if config == nil {
 			cfg.OggOpusEncoder = &OggOpusEncoderConfig{
 				FrameDurationMS: 20,
-				Application:     OggOpusApplicationAudio,
+				Application:     OggOpusApplicationVoIP,
 			}
 			return
 		}
