@@ -31,6 +31,23 @@ func TestNewOggOpusStreamEncoderRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestResolveOggOpusEncoderConfigDefaultsToVoIP(t *testing.T) {
+	t.Parallel()
+
+	resolved := resolveOggOpusEncoderConfig(nil)
+	if resolved.FrameDurationMS != 20 {
+		t.Fatalf("expected FrameDurationMS to be 20, got %d", resolved.FrameDurationMS)
+	}
+	if resolved.Application != OggOpusApplicationVoIP {
+		t.Fatalf("expected Application to be %q, got %q", OggOpusApplicationVoIP, resolved.Application)
+	}
+
+	resolved = resolveOggOpusEncoderConfig(&OggOpusEncoderConfig{})
+	if resolved.Application != OggOpusApplicationVoIP {
+		t.Fatalf("expected empty Application to default to %q, got %q", OggOpusApplicationVoIP, resolved.Application)
+	}
+}
+
 func TestOggOpusStreamEncoderBuffersUntilFrameReady(t *testing.T) {
 	t.Parallel()
 

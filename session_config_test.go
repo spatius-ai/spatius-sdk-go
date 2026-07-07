@@ -164,6 +164,22 @@ func TestSessionOptionOverrides(t *testing.T) {
 	}
 }
 
+func TestWithOggOpusEncoderNilDefaultsToVoIP(t *testing.T) {
+	cfg := defaultSessionConfig()
+
+	WithOggOpusEncoder(nil)(cfg)
+
+	if cfg.OggOpusEncoder == nil {
+		t.Fatal("expected OggOpusEncoder to be set")
+	}
+	if cfg.OggOpusEncoder.FrameDurationMS != 20 {
+		t.Fatalf("expected FrameDurationMS to be 20, got %d", cfg.OggOpusEncoder.FrameDurationMS)
+	}
+	if cfg.OggOpusEncoder.Application != OggOpusApplicationVoIP {
+		t.Fatalf("expected Application to be %q, got %q", OggOpusApplicationVoIP, cfg.OggOpusEncoder.Application)
+	}
+}
+
 func TestSessionOptionDefaults(t *testing.T) {
 	cfg := defaultSessionConfig()
 
