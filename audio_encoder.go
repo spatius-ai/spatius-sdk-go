@@ -71,6 +71,7 @@ type OggOpusStreamEncoder struct {
 	pageSequence         uint32
 	streamSerial         uint32
 	totalInputSamples    int
+	encodedFrameSamples  int
 	collectEncodedOutput bool
 	encodedOutput        []byte
 	encoder              *opus.Encoder
@@ -98,6 +99,7 @@ func NewOggOpusStreamEncoder(sampleRate int, bitrate int, config *OggOpusEncoder
 			log.Printf("spatiussdkgo: failed to set Opus encoder bitrate %d, using encoder default: %v", bitrate, err)
 		}
 	}
+	configureOpusQualityControls(encoder)
 
 	frameSize := sampleRate * resolved.FrameDurationMS / 1000
 	return &OggOpusStreamEncoder{
@@ -129,6 +131,9 @@ func (e *OggOpusStreamEncoder) Encode(pcmData []byte, end bool) (EncodedAudioChu
 
 	if end {
 		if err := e.flushFinalFrame(&payload); err != nil {
+			return EncodedAudioChunk{}, err
+		}
+		if err := e.padForPreSkip(&payload); err != nil {
 			return EncodedAudioChunk{}, err
 		}
 		e.finalizeStream(&payload)
@@ -178,7 +183,9 @@ func (e *OggOpusStreamEncoder) queueAudioPacket(payload *[]byte, pcmFrame []byte
 	}
 
 	e.totalInputSamples += actualSamples
-	granule := uint64(e.preSkip + e.totalInputSamples*e.sampleScale)
+	e.encodedFrameSamples += e.frameSize
+	// Non-EOS granules track all decoded samples at Opus's fixed 48 kHz clock.
+	granule := uint64(e.encodedFrameSamples * e.sampleScale)
 
 	if len(e.pendingPacket) > 0 {
 		e.writePage(payload, e.pendingPacket, e.pendingGranule, false, false)
@@ -189,9 +196,27 @@ func (e *OggOpusStreamEncoder) queueAudioPacket(payload *[]byte, pcmFrame []byte
 	return nil
 }
 
+func (e *OggOpusStreamEncoder) padForPreSkip(payload *[]byte) error {
+	if e.encodedFrameSamples == 0 {
+		return nil
+	}
+
+	// Encode enough tail padding for a decoder to discard pre-skip without
+	// shortening the requested PCM duration. The EOS granule trims the excess.
+	finalGranule := e.preSkip + e.totalInputSamples*e.sampleScale
+	for e.encodedFrameSamples*e.sampleScale < finalGranule {
+		if err := e.queueAudioPacket(payload, make([]byte, e.frameBytes), 0); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (e *OggOpusStreamEncoder) finalizeStream(payload *[]byte) {
 	if len(e.pendingPacket) > 0 {
-		e.writePage(payload, e.pendingPacket, e.pendingGranule, false, true)
+		finalGranule := uint64(e.preSkip + e.totalInputSamples*e.sampleScale)
+		e.writePage(payload, e.pendingPacket, finalGranule, false, true)
 		e.pendingPacket = nil
 		return
 	}
@@ -311,11 +336,25 @@ func buildOggLacingValues(packet []byte) []byte {
 	}
 
 	segments = append(segments, byte(size))
-	if len(packet)%255 == 0 {
-		segments = append(segments, 0)
+	return segments
+}
+
+func configureOpusQualityControls(encoder *opus.Encoder) {
+	controls := []struct {
+		name string
+		set  func() error
+	}{
+		{name: "VBR", set: func() error { return encoder.SetVBR(true) }},
+		{name: "complexity", set: func() error { return encoder.SetComplexity(10) }},
+		{name: "DTX", set: func() error { return encoder.SetDTX(false) }},
+		{name: "in-band FEC", set: func() error { return encoder.SetInBandFEC(false) }},
 	}
 
-	return segments
+	for _, control := range controls {
+		if err := control.set(); err != nil {
+			log.Printf("spatiussdkgo: failed to configure Opus encoder %s control: %v", control.name, err)
+		}
+	}
 }
 
 func validateOggOpusEncoderConfig(sampleRate int, frameDurationMS int, application OggOpusApplication) error {
