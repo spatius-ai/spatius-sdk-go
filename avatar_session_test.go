@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +113,7 @@ func TestAvatarSessionInitFailure(t *testing.T) {
 }
 
 func TestAvatarSessionInitMissingConfig(t *testing.T) {
-	session := NewAvatarSession()
+	session := NewAvatarSession(WithRegion("us-west"))
 
 	err := session.Init(context.Background())
 	if err == nil {
@@ -305,6 +306,14 @@ func TestAvatarSessionInitNilConfig(t *testing.T) {
 }
 
 func TestAvatarSessionInitMissingConsoleEndpoint(t *testing.T) {
+	// Region resolution can only leave endpoint URLs empty when the resolver
+	// returns no region, which never happens in production (it falls back to
+	// the cached region or DefaultRegion). Stub it here to exercise the
+	// defensive validation.
+	original := resolveRegionFunc
+	resolveRegionFunc = func(context.Context, string, string) string { return "" }
+	t.Cleanup(func() { resolveRegionFunc = original })
+
 	session := &AvatarSession{config: defaultSessionConfig()}
 	session.config.APIKey = "api-key"
 	session.config.ExpireAt = time.Now().Add(5 * time.Minute)
@@ -671,6 +680,167 @@ func TestAvatarSessionStartWithLiveKitEgress(t *testing.T) {
 	}
 
 	_ = session.Close()
+}
+
+func TestAvatarSessionStartSendsExtraParams(t *testing.T) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+
+	var receivedExtraParams map[string]string
+	var serverConn *websocket.Conn
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		serverConn = conn
+
+		go func() {
+			messageType, payload, err := conn.ReadMessage()
+			if err != nil || messageType != websocket.BinaryMessage {
+				return
+			}
+
+			var envelope message.Message
+			if err := proto.Unmarshal(payload, &envelope); err != nil {
+				return
+			}
+
+			if envelope.GetType() == message.MessageType_MESSAGE_CLIENT_CONFIGURE_SESSION {
+				receivedExtraParams = envelope.GetClientConfigureSession().GetExtraParams()
+			}
+
+			confirmMsg := &message.Message{
+				Type: message.MessageType_MESSAGE_SERVER_CONFIRM_SESSION,
+				Data: &message.Message_ServerConfirmSession{
+					ServerConfirmSession: &message.ServerConfirmSession{
+						ConnectionId: "conn-id-extra-params",
+					},
+				},
+			}
+			confirmData, _ := proto.Marshal(confirmMsg)
+			_ = conn.WriteMessage(websocket.BinaryMessage, confirmData)
+		}()
+	}))
+	defer server.Close()
+	defer func() {
+		if serverConn != nil {
+			_ = serverConn.Close()
+		}
+	}()
+
+	extraParams := map[string]string{
+		"server_post_process": "false",
+		"future_option":       "enabled",
+	}
+	session := NewAvatarSession(
+		WithAvatarID("avatar-123"),
+		WithAppID("app-123"),
+		WithIngressEndpointURL(strings.Replace(server.URL, "http", "ws", 1)),
+		WithExtraParams(extraParams),
+	)
+	session.sessionToken = "session-token-123"
+
+	if _, err := session.Start(context.Background()); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	if len(receivedExtraParams) != len(extraParams) {
+		t.Fatalf("expected extra_params %v, got %v", extraParams, receivedExtraParams)
+	}
+	for key, value := range extraParams {
+		if receivedExtraParams[key] != value {
+			t.Fatalf("expected extra_params[%q] to be %q, got %q", key, value, receivedExtraParams[key])
+		}
+	}
+
+	_ = session.Close()
+}
+
+func TestAvatarSessionSendAudioTraceContextOnlyOnFirstChunk(t *testing.T) {
+	enableTestTelemetry(t, dummyTelemetryServer(t))
+
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+
+	serverConnCh := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		serverConnCh <- conn
+	}))
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http", "ws", 1)
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial websocket server: %v", err)
+	}
+	defer clientConn.Close() // nolint:errcheck
+
+	session := NewAvatarSession(
+		WithAppID("app-1"),
+		WithAvatarID("avatar-1"),
+		WithConsoleEndpointURL("https://console.example.com"),
+		WithIngressEndpointURL("wss://api.example.com"),
+	)
+	session.conn = clientConn
+
+	serverConn := <-serverConnCh
+	defer serverConn.Close() // nolint:errcheck
+
+	received := make(chan *message.ClientAudioInput, 2)
+	go func() {
+		for i := 0; i < 2; i++ {
+			messageType, payload, err := serverConn.ReadMessage()
+			if err != nil || messageType != websocket.BinaryMessage {
+				return
+			}
+			var envelope message.Message
+			if err := proto.Unmarshal(payload, &envelope); err != nil {
+				return
+			}
+			received <- envelope.GetClientAudioInput()
+		}
+	}()
+
+	reqID, err := session.SendAudio([]byte("first"), false)
+	if err != nil {
+		t.Fatalf("SendAudio returned error: %v", err)
+	}
+	if _, err := session.SendAudio([]byte("second"), true); err != nil {
+		t.Fatalf("SendAudio returned error: %v", err)
+	}
+
+	first := <-received
+	second := <-received
+
+	if first.GetReqId() != reqID {
+		t.Fatalf("expected req id %q, got %q", reqID, first.GetReqId())
+	}
+	traceparent := first.GetTraceContext().GetTraceparent()
+	matched, _ := regexp.MatchString(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`, traceparent)
+	if !matched {
+		t.Fatalf("expected W3C traceparent on the first chunk, got %q", traceparent)
+	}
+	if second.GetTraceContext() != nil {
+		t.Fatal("expected later chunks to omit trace_context")
+	}
+
+	// The server has not sent animation frames yet; closing the session must
+	// finish the in-flight request telemetry.
+	_ = session.Close()
+	session.telemetryMu.Lock()
+	remaining := len(session.requestTelemetry)
+	session.telemetryMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("expected request telemetry to be finished, %d entries remain", remaining)
+	}
 }
 
 func TestAvatarSessionStartWithOggOpusAudioFormat(t *testing.T) {

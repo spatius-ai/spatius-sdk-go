@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	message "github.com/spatius-ai/spatius-sdk-go/proto/generated"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -23,6 +24,15 @@ const (
 	sessionTokenPath     = "/session-tokens"
 	ingressWebSocketPath = "/websocket"
 )
+
+// requestTelemetry tracks per-request telemetry state for one req_id.
+type requestTelemetry struct {
+	span                trace.Span
+	startedAt           time.Time
+	audioBytes          int64
+	firstAnimationAt    time.Time
+	animationFrameCount int64
+}
 
 // AvatarSession represents an active avatar session configured via SessionOptions.
 type AvatarSession struct {
@@ -33,6 +43,11 @@ type AvatarSession struct {
 	lastReqID    string // tracks the most recent request ID for interrupt
 	connectionID string
 	audioEncoder *OggOpusStreamEncoder
+
+	telemetryMu              sync.Mutex
+	requestTelemetry         map[string]*requestTelemetry
+	sessionStartedAt         time.Time
+	sessionTelemetryFinished bool
 }
 
 // NewAvatarSession creates a new AvatarSession using the provided SessionOptions.
@@ -56,6 +71,8 @@ func (s *AvatarSession) Config() SessionConfig {
 }
 
 // Init exchanges configuration credentials for a session token against the console API.
+// It first resolves the ingress region (when set to "auto") via the global
+// bootstrap API and composes the endpoint URLs from the result.
 func (s *AvatarSession) Init(ctx context.Context) error {
 	if s == nil {
 		return errors.New("init avatar session: session is nil")
@@ -64,6 +81,16 @@ func (s *AvatarSession) Init(ctx context.Context) error {
 		return errors.New("init avatar session: session config is nil")
 	}
 
+	s.ensureRegionResolved(ctx)
+	setResourceContext(s.config.AppID, s.config.Region)
+
+	span := startSpan("avatar.session.init", s.telemetryTraceAttributes())
+	err := s.init(ctx)
+	finishSpan(span, map[string]any{"region": s.config.Region}, err)
+	return err
+}
+
+func (s *AvatarSession) init(ctx context.Context) error {
 	cfg := s.config
 	if cfg.APIKey == "" {
 		return errors.New("init avatar session: missing API key")
@@ -93,16 +120,28 @@ func (s *AvatarSession) Init(ctx context.Context) error {
 	req.Header.Set("X-Api-Key", cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	requestStartedAt := time.Now()
+	serverAddress := ""
+	if parsed, parseErr := url.Parse(endpoint); parseErr == nil {
+		serverAddress = parsed.Hostname()
+	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		recordHTTPClientDuration(sessionTokenPath, http.MethodPost,
+			float64(time.Since(requestStartedAt).Milliseconds()), 0, serverAddress)
 		return fmt.Errorf("init avatar session: request session token: %w", err)
 	}
 	defer resp.Body.Close() // nolint:errcheck
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		recordHTTPClientDuration(sessionTokenPath, http.MethodPost,
+			float64(time.Since(requestStartedAt).Milliseconds()), resp.StatusCode, serverAddress)
 		return fmt.Errorf("init avatar session: read response: %w", err)
 	}
+	recordHTTPClientDuration(sessionTokenPath, http.MethodPost,
+		float64(time.Since(requestStartedAt).Milliseconds()), resp.StatusCode, serverAddress)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("init avatar session: request failed with status %d", resp.StatusCode)
@@ -126,6 +165,28 @@ func (s *AvatarSession) Init(ctx context.Context) error {
 // Start establishes WebSocket connection to the ingress endpoint and performs v2 handshake.
 // Returns the connection ID for tracking this session.
 func (s *AvatarSession) Start(ctx context.Context) (string, error) {
+	span := startSpan("avatar.session.start", s.telemetryTraceAttributes())
+	startedAt := time.Now()
+
+	connectionID, err := s.start(ctx)
+	if err != nil {
+		recordMetric("avatar.session.start.duration",
+			float64(time.Since(startedAt).Milliseconds()),
+			s.telemetryMetricAttributes(boolPtr(false)))
+		finishSpan(span, nil, err)
+		return "", err
+	}
+
+	s.sessionStartedAt = time.Now()
+	s.sessionTelemetryFinished = false
+	recordMetric("avatar.session.start.duration",
+		float64(time.Since(startedAt).Milliseconds()),
+		s.telemetryMetricAttributes(boolPtr(true)))
+	finishSpan(span, map[string]any{"connection_id": connectionID}, nil)
+	return connectionID, nil
+}
+
+func (s *AvatarSession) start(ctx context.Context) (string, error) {
 	if s == nil {
 		return "", errors.New("start avatar session: session is nil")
 	}
@@ -239,6 +300,10 @@ func (s *AvatarSession) sendClientConfigureSession() error {
 		Bitrate:              int32(s.config.Bitrate),
 		AudioFormat:          protoAudioFormat(s.config.AudioFormat),
 		TransportCompression: message.TransportCompression_TRANSPORT_COMPRESSION_NONE,
+	}
+
+	if len(s.config.ExtraParams) > 0 {
+		clientConfig.ExtraParams = s.config.ExtraParams
 	}
 
 	// Add LiveKit egress configuration if provided
@@ -389,14 +454,26 @@ func (s *AvatarSession) SendAudio(audio []byte, end bool) (string, error) {
 		return reqID, nil
 	}
 
+	// Create a request span immediately before the first transmitted audio
+	// chunk, then propagate its W3C context to the backend once per req_id.
+	traceContext := s.startRequestTelemetry(reqID)
+
+	audioInput := &message.ClientAudioInput{
+		ReqId: reqID,
+		Audio: payload,
+		End:   end,
+	}
+	if traceparent := traceContext["traceparent"]; traceparent != "" || traceContext["tracestate"] != "" {
+		audioInput.TraceContext = &message.TraceContext{
+			Traceparent: traceparent,
+			Tracestate:  traceContext["tracestate"],
+		}
+	}
+
 	msg := &message.Message{
 		Type: message.MessageType_MESSAGE_CLIENT_AUDIO_INPUT,
 		Data: &message.Message_ClientAudioInput{
-			ClientAudioInput: &message.ClientAudioInput{
-				ReqId: reqID,
-				Audio: payload,
-				End:   end,
-			},
+			ClientAudioInput: audioInput,
 		},
 	}
 
@@ -406,8 +483,12 @@ func (s *AvatarSession) SendAudio(audio []byte, end bool) (string, error) {
 	}
 
 	if err := s.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return "", fmt.Errorf("send audio: write message: %w", err)
+		sendErr := fmt.Errorf("send audio: write message: %w", err)
+		s.finishRequestTelemetry(reqID, "send_error", sendErr)
+		return "", sendErr
 	}
+
+	s.recordAudioSentTelemetry(reqID, int64(len(payload)), end)
 
 	if len(encodedStream) > 0 {
 		s.notifyEncodedAudio(reqID, encodedStream)
@@ -449,8 +530,12 @@ func (s *AvatarSession) Interrupt() (string, error) {
 	}
 
 	if err := s.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return "", fmt.Errorf("interrupt: write message: %w", err)
+		interruptErr := fmt.Errorf("interrupt: write message: %w", err)
+		s.finishRequestTelemetry(reqID, "interrupt_error", interruptErr)
+		return "", interruptErr
 	}
+
+	s.finishRequestTelemetry(reqID, "interrupted", nil)
 
 	// Clear current request ID so next SendAudio creates a new one
 	s.currentReqID = ""
@@ -463,6 +548,16 @@ func (s *AvatarSession) Close() error {
 	if s == nil {
 		return nil
 	}
+
+	s.finishAllRequestTelemetry("session_closed")
+
+	if !s.sessionStartedAt.IsZero() && !s.sessionTelemetryFinished {
+		recordMetric("avatar.session.duration",
+			float64(time.Since(s.sessionStartedAt).Milliseconds()),
+			s.telemetryMetricAttributes(boolPtr(true)))
+		s.sessionTelemetryFinished = true
+	}
+
 	if s.conn != nil {
 		err := s.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		if err != nil {
@@ -623,30 +718,213 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 
 		switch envelope.GetType() {
 		case message.MessageType_MESSAGE_SERVER_RESPONSE_ANIMATION:
+			anim := envelope.GetServerResponseAnimation()
+			last := anim != nil && anim.GetEnd()
+			if anim != nil {
+				s.recordAnimationTelemetry(anim.GetReqId(), last)
+			}
 			if cfg != nil && cfg.TransportFrames != nil {
 				frame := append([]byte(nil), payload...)
-				anim := envelope.GetServerResponseAnimation()
-				last := anim != nil && anim.GetEnd()
 				callbacks.dispatch(func() { cfg.TransportFrames(frame, last) })
 			}
 		case message.MessageType_MESSAGE_SERVER_ERROR:
-			if cfg != nil && cfg.OnError != nil {
-				serverErr := envelope.GetServerError()
-				if serverErr == nil {
+			serverErr := envelope.GetServerError()
+			if serverErr == nil {
+				if cfg != nil && cfg.OnError != nil {
 					callbackErr := errors.New("avatar session read loop: error message missing payload")
 					callbacks.dispatch(func() { cfg.OnError(callbackErr) })
-					continue
 				}
-				report := newServerAvatarSDKError(
-					"runtime",
-					serverErr.GetCode(),
-					serverErr.GetMessage(),
-					serverErr.GetConnectionId(),
-					serverErr.GetReqId(),
-				)
+				continue
+			}
+			report := newServerAvatarSDKError(
+				"runtime",
+				serverErr.GetCode(),
+				serverErr.GetMessage(),
+				serverErr.GetConnectionId(),
+				serverErr.GetReqId(),
+			)
+			s.finishRequestTelemetry(serverErr.GetReqId(), "server_error", report)
+			if cfg != nil && cfg.OnError != nil {
 				callbacks.dispatch(func() { cfg.OnError(report) })
 			}
 		}
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+// telemetryEgressType returns the egress delivery mode used in telemetry attributes.
+func (s *AvatarSession) telemetryEgressType() string {
+	if s == nil || s.config == nil {
+		return "websocket"
+	}
+	if s.config.LiveKitEgress != nil {
+		return "livekit"
+	}
+	if s.config.AgoraEgress != nil {
+		return "agora"
+	}
+	return "websocket"
+}
+
+// telemetryMetricAttributes returns the shared attributes for session metrics.
+func (s *AvatarSession) telemetryMetricAttributes(success *bool) map[string]any {
+	attrs := map[string]any{
+		"region":       "",
+		"audio_format": "",
+		"egress_type":  s.telemetryEgressType(),
+	}
+	if s != nil && s.config != nil {
+		attrs["region"] = s.config.Region
+		attrs["audio_format"] = string(s.config.AudioFormat)
+	}
+	if success != nil {
+		attrs["success"] = *success
+	}
+	return attrs
+}
+
+// telemetryTraceAttributes returns the shared attributes for session spans.
+func (s *AvatarSession) telemetryTraceAttributes() map[string]any {
+	attrs := s.telemetryMetricAttributes(nil)
+	attrs["app_id"] = ""
+	attrs["avatar_id"] = ""
+	if s != nil && s.config != nil {
+		attrs["app_id"] = s.config.AppID
+		attrs["avatar_id"] = s.config.AvatarID
+	}
+	if s != nil && s.connectionID != "" {
+		attrs["connection_id"] = s.connectionID
+	}
+	return attrs
+}
+
+// startRequestTelemetry starts a span for a req_id and returns its W3C trace
+// context for the first audio message. It returns nil when no context should
+// be attached.
+func (s *AvatarSession) startRequestTelemetry(reqID string) map[string]string {
+	if s == nil {
+		return nil
+	}
+
+	s.telemetryMu.Lock()
+	_, exists := s.requestTelemetry[reqID]
+	s.telemetryMu.Unlock()
+	if exists {
+		return nil
+	}
+
+	attrs := s.telemetryTraceAttributes()
+	attrs["req_id"] = reqID
+	span := startSpan("driven.request", attrs)
+	if span == nil && !telemetryEnabled() {
+		return nil
+	}
+
+	s.telemetryMu.Lock()
+	if s.requestTelemetry == nil {
+		s.requestTelemetry = map[string]*requestTelemetry{}
+	}
+	s.requestTelemetry[reqID] = &requestTelemetry{span: span, startedAt: time.Now()}
+	s.telemetryMu.Unlock()
+
+	return injectTraceContext(span)
+}
+
+// finishRequestTelemetry records final request metrics and ends the span for a req_id.
+func (s *AvatarSession) finishRequestTelemetry(reqID, endReason string, err error) {
+	if s == nil || reqID == "" {
+		return
+	}
+
+	s.telemetryMu.Lock()
+	state := s.requestTelemetry[reqID]
+	delete(s.requestTelemetry, reqID)
+	s.telemetryMu.Unlock()
+	if state == nil {
+		return
+	}
+
+	durationMS := float64(time.Since(state.startedAt).Milliseconds())
+	attrs := s.telemetryMetricAttributes(nil)
+	attrs["end_reason"] = endReason
+	recordMetric("avatar.request.duration", durationMS, attrs)
+	recordMetric("avatar.request.audio_bytes", float64(state.audioBytes), attrs)
+	if !state.firstAnimationAt.IsZero() {
+		recordMetric("avatar.request.first_animation_latency",
+			float64(state.firstAnimationAt.Sub(state.startedAt).Milliseconds()), attrs)
+	}
+	finishSpan(state.span, map[string]any{
+		"req_id":                reqID,
+		"audio_bytes":           state.audioBytes,
+		"animation_frame_count": state.animationFrameCount,
+		"end_reason":            endReason,
+	}, err)
+}
+
+// finishAllRequestTelemetry finishes every in-flight request telemetry state.
+func (s *AvatarSession) finishAllRequestTelemetry(endReason string) {
+	if s == nil {
+		return
+	}
+	s.telemetryMu.Lock()
+	reqIDs := make([]string, 0, len(s.requestTelemetry))
+	for reqID := range s.requestTelemetry {
+		reqIDs = append(reqIDs, reqID)
+	}
+	s.telemetryMu.Unlock()
+	for _, reqID := range reqIDs {
+		s.finishRequestTelemetry(reqID, endReason, nil)
+	}
+}
+
+// recordAudioSentTelemetry accumulates sent audio bytes for a req_id.
+func (s *AvatarSession) recordAudioSentTelemetry(reqID string, payloadBytes int64, end bool) {
+	if s == nil {
+		return
+	}
+	s.telemetryMu.Lock()
+	state := s.requestTelemetry[reqID]
+	if state != nil {
+		state.audioBytes += payloadBytes
+	}
+	s.telemetryMu.Unlock()
+	if state != nil && end {
+		addSpanEvent(state.span, "audio.input.complete", nil)
+	}
+}
+
+// recordAnimationTelemetry tracks animation frames for a req_id and finishes
+// request telemetry when the final frame arrives.
+func (s *AvatarSession) recordAnimationTelemetry(reqID string, isLast bool) {
+	if s == nil || reqID == "" {
+		return
+	}
+
+	s.telemetryMu.Lock()
+	state := s.requestTelemetry[reqID]
+	var span trace.Span
+	firstFrame := false
+	if state != nil {
+		state.animationFrameCount++
+		firstFrame = state.animationFrameCount == 1
+		if state.firstAnimationAt.IsZero() {
+			state.firstAnimationAt = time.Now()
+		}
+		span = state.span
+	}
+	s.telemetryMu.Unlock()
+
+	if state == nil {
+		return
+	}
+	if firstFrame {
+		addSpanEvent(span, "animation.first_frame", nil)
+	}
+	if isLast {
+		s.finishRequestTelemetry(reqID, "animation_end", nil)
 	}
 }
 
