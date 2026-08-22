@@ -74,16 +74,28 @@ message ClientConfigureSession {
   LiveKitEgressConfig livekit_egress = 6;
   // Agora egress configuration (required when egress_type is EGRESS_TYPE_AGORA)
   AgoraEgressConfig agora_egress = 7;
+  map<string, string> extra_params = 8;
 }
 
 message ServerConfirmSession {
   string connection_id = 1;
 }
 
+// TraceContext carries W3C Trace Context for one req_id.
+message TraceContext {
+  // W3C traceparent: version, trace ID, parent span ID, and trace flags.
+  string traceparent = 1;
+  // Optional W3C vendor-specific trace state.
+  string tracestate = 2;
+}
+
 message ClientAudioInput {
   string req_id = 1;
   bool end = 2;
   bytes audio = 3;
+  // Optional. Set on the first ClientAudioInput for each req_id when tracing
+  // is enabled. Later chunks omit it.
+  TraceContext trace_context = 4;
 }
 
 message ServerError {

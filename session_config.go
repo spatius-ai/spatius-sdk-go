@@ -10,8 +10,16 @@ import (
 type AudioFormat string
 
 const (
-	// DefaultRegion is used when no region is provided.
-	DefaultRegion  = "us-west"
+	// DefaultRegion is the historical fallback region used when automatic
+	// region resolution is unavailable.
+	DefaultRegion = "us-west"
+
+	// DefaultRegionRequest is the sentinel meaning "let the global bootstrap
+	// API schedule the ingress region". This is the default when the user does
+	// not pin a region; it is not a usable region by itself and is resolved in
+	// AvatarSession.Init.
+	DefaultRegionRequest = "auto"
+
 	cnRegionPrefix = "cn-"
 
 	// AudioFormatPCMS16LE sends mono 16-bit PCM bytes.
@@ -58,6 +66,7 @@ type SessionConfig struct {
 	IngressEndpointURL string
 	LiveKitEgress      *LiveKitEgressConfig // If set, enables LiveKit egress mode - audio and animation are streamed to a LiveKit room via the egress service
 	AgoraEgress        *AgoraEgressConfig   // If set, enables Agora egress mode - audio and animation are streamed to an Agora channel via the egress service
+	ExtraParams        map[string]string    // Optional extension parameters sent during the WebSocket session handshake
 }
 
 // LiveKitEgressConfig contains configuration for streaming to a LiveKit room.
@@ -103,7 +112,7 @@ func defaultSessionConfig() *SessionConfig {
 		SampleRate:      16000,
 		Bitrate:         0,
 		AudioFormat:     AudioFormatPCMS16LE,
-		Region:          DefaultRegion,
+		Region:          DefaultRegionRequest,
 	}
 }
 
@@ -122,21 +131,38 @@ func ingressEndpointURLForRegion(region string) string {
 	return fmt.Sprintf("wss://api.%s.%s/v2/driveningress", region, endpointDomainForRegion(region))
 }
 
+func (cfg *SessionConfig) hasConcreteRegion() bool {
+	return cfg.Region != "" && cfg.Region != DefaultRegionRequest
+}
+
+// applyResolvedRegion sets a concrete region and composes any missing endpoint
+// URLs from it. Explicitly configured endpoint URLs are always preserved.
+// Called by AvatarSession.Init after "auto" region resolution, and at
+// construction time when a concrete region was given.
+func (cfg *SessionConfig) applyResolvedRegion(region string) {
+	cfg.Region = strings.TrimSpace(region)
+	if cfg.Region == "" || cfg.Region == DefaultRegionRequest {
+		return
+	}
+	if cfg.ConsoleEndpointURL == "" {
+		cfg.ConsoleEndpointURL = consoleEndpointURLForRegion(cfg.Region)
+	}
+	if cfg.IngressEndpointURL == "" {
+		cfg.IngressEndpointURL = ingressEndpointURLForRegion(cfg.Region)
+	}
+}
+
 func (cfg *SessionConfig) applyEndpointDefaults() {
-	region := strings.TrimSpace(cfg.Region)
-	if region == "" {
-		region = DefaultRegion
+	cfg.Region = strings.TrimSpace(cfg.Region)
+	if cfg.Region == "" {
+		cfg.Region = DefaultRegionRequest
 	}
 
-	cfg.Region = region
 	cfg.ConsoleEndpointURL = strings.TrimSpace(cfg.ConsoleEndpointURL)
 	cfg.IngressEndpointURL = strings.TrimSpace(cfg.IngressEndpointURL)
 
-	if cfg.ConsoleEndpointURL == "" {
-		cfg.ConsoleEndpointURL = consoleEndpointURLForRegion(region)
-	}
-	if cfg.IngressEndpointURL == "" {
-		cfg.IngressEndpointURL = ingressEndpointURLForRegion(region)
+	if cfg.hasConcreteRegion() {
+		cfg.applyResolvedRegion(cfg.Region)
 	}
 }
 
@@ -163,6 +189,9 @@ func WithAppID(appID string) SessionOption {
 
 // WithRegion sets the Spatius region used to compose endpoint URLs.
 // Explicit console or ingress endpoint URLs override the region-derived defaults.
+// The default is DefaultRegionRequest ("auto"): the recommended region is
+// resolved via the global bootstrap API during Init. Pass a concrete region
+// (e.g. "us-west") to skip resolution.
 func WithRegion(region string) SessionOption {
 	return func(cfg *SessionConfig) {
 		cfg.Region = region
@@ -287,5 +316,13 @@ func WithLiveKitEgress(config *LiveKitEgressConfig) SessionOption {
 func WithAgoraEgress(config *AgoraEgressConfig) SessionOption {
 	return func(cfg *SessionConfig) {
 		cfg.AgoraEgress = config
+	}
+}
+
+// WithExtraParams sets optional extension parameters sent during the WebSocket
+// session handshake. Keys and values must be strings.
+func WithExtraParams(extraParams map[string]string) SessionOption {
+	return func(cfg *SessionConfig) {
+		cfg.ExtraParams = extraParams
 	}
 }

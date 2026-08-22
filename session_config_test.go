@@ -210,8 +210,11 @@ func TestSessionOptionDefaults(t *testing.T) {
 	if cfg.UseQueryAuth {
 		t.Fatal("expected default UseQueryAuth to be false")
 	}
-	if cfg.Region != DefaultRegion {
-		t.Fatalf("expected default Region to be %q, got %q", DefaultRegion, cfg.Region)
+	if cfg.Region != DefaultRegionRequest {
+		t.Fatalf("expected default Region to be %q, got %q", DefaultRegionRequest, cfg.Region)
+	}
+	if cfg.ExtraParams != nil {
+		t.Fatal("expected default ExtraParams to be nil")
 	}
 	if cfg.LiveKitEgress != nil {
 		t.Fatal("expected default LiveKitEgress to be nil")
