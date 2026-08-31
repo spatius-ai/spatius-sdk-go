@@ -20,6 +20,10 @@ const (
 	// AvatarSession.Init.
 	DefaultRegionRequest = "auto"
 
+	// DefaultSessionTokenTTL is the default session-token lifetime applied by
+	// NewAvatarSession when WithExpireAt is not used.
+	DefaultSessionTokenTTL = time.Hour
+
 	cnRegionPrefix = "cn-"
 
 	// AudioFormatPCMS16LE sends mono 16-bit PCM bytes.
@@ -205,7 +209,8 @@ func WithUseQueryAuth(useQueryAuth bool) SessionOption {
 	}
 }
 
-// WithExpireAt sets the expiration time of the session.
+// WithExpireAt sets the expiration time of the session token. When unset,
+// NewAvatarSession defaults it to DefaultSessionTokenTTL from now.
 func WithExpireAt(expireAt time.Time) SessionOption {
 	return func(cfg *SessionConfig) {
 		cfg.ExpireAt = expireAt

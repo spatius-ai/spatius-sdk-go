@@ -24,6 +24,8 @@ const (
 	ErrorCodeEgressUnavailable AvatarSDKErrorCode = "egressUnavailable"
 	// ErrorCodeProtocolError indicates the websocket protocol exchange was invalid.
 	ErrorCodeProtocolError AvatarSDKErrorCode = "protocolError"
+	// ErrorCodeConnectionFailed indicates a connection attempt failed or timed out.
+	ErrorCodeConnectionFailed AvatarSDKErrorCode = "connectionFailed"
 	// ErrorCodeUnknown indicates an unknown error.
 	ErrorCodeUnknown AvatarSDKErrorCode = "unknown"
 )
