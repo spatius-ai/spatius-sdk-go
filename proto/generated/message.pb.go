@@ -24,12 +24,12 @@ type MessageType int32
 
 const (
 	MessageType_MESSAGE_UNSPECIFIED               MessageType = 0
-	MessageType_MESSAGE_CLIENT_CONFIGURE_SESSION  MessageType = 1 // 协商会话参数
-	MessageType_MESSAGE_SERVER_CONFIRM_SESSION    MessageType = 2 // 确认协商成功
+	MessageType_MESSAGE_CLIENT_CONFIGURE_SESSION  MessageType = 1
+	MessageType_MESSAGE_SERVER_CONFIRM_SESSION    MessageType = 2
 	MessageType_MESSAGE_CLIENT_AUDIO_INPUT        MessageType = 3
 	MessageType_MESSAGE_SERVER_ERROR              MessageType = 4
 	MessageType_MESSAGE_SERVER_RESPONSE_ANIMATION MessageType = 5
-	MessageType_MESSAGE_CLIENT_INTERRUPT          MessageType = 7 // 打断
+	MessageType_MESSAGE_CLIENT_INTERRUPT          MessageType = 7
 )
 
 // Enum value maps for MessageType.
@@ -170,13 +170,12 @@ func (TransportCompression) EnumDescriptor() ([]byte, []int) {
 	return file_message_proto_rawDescGZIP(), []int{2}
 }
 
-// EgressType specifies how animation and audio data should be delivered
 type EgressType int32
 
 const (
-	EgressType_EGRESS_TYPE_UNSPECIFIED EgressType = 0 // Default: return animation data via WebSocket
-	EgressType_EGRESS_TYPE_LIVEKIT     EgressType = 1 // Stream to LiveKit room via egress service
-	EgressType_EGRESS_TYPE_AGORA       EgressType = 2 // Stream to Agora channel via egress service
+	EgressType_EGRESS_TYPE_UNSPECIFIED EgressType = 0
+	EgressType_EGRESS_TYPE_LIVEKIT     EgressType = 1
+	EgressType_EGRESS_TYPE_AGORA       EgressType = 2
 )
 
 // Enum value maps for EgressType.
@@ -220,28 +219,19 @@ func (EgressType) EnumDescriptor() ([]byte, []int) {
 	return file_message_proto_rawDescGZIP(), []int{3}
 }
 
-// LiveKitEgressConfig contains configuration for streaming to a LiveKit room
 type LiveKitEgressConfig struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// LiveKit server URL (e.g., wss://livekit.example.com)
-	Url string `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
-	// Deprecated: use api_token instead. Optional when api_token is provided.
-	ApiKey string `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
-	// Deprecated: use api_token instead. Optional when api_token is provided.
-	ApiSecret string `protobuf:"bytes,3,opt,name=api_secret,json=apiSecret,proto3" json:"api_secret,omitempty"`
-	// LiveKit room name to join
-	RoomName string `protobuf:"bytes,4,opt,name=room_name,json=roomName,proto3" json:"room_name,omitempty"`
-	// Publisher identity in the room
-	PublisherId string `protobuf:"bytes,5,opt,name=publisher_id,json=publisherId,proto3" json:"publisher_id,omitempty"`
-	// Extra participant attributes passed to LiveKit
+	Url             string            `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	ApiKey          string            `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	ApiSecret       string            `protobuf:"bytes,3,opt,name=api_secret,json=apiSecret,proto3" json:"api_secret,omitempty"`
+	RoomName        string            `protobuf:"bytes,4,opt,name=room_name,json=roomName,proto3" json:"room_name,omitempty"`
+	PublisherId     string            `protobuf:"bytes,5,opt,name=publisher_id,json=publisherId,proto3" json:"publisher_id,omitempty"`
 	ExtraAttributes map[string]string `protobuf:"bytes,6,rep,name=extra_attributes,json=extraAttributes,proto3" json:"extra_attributes,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	// Idle timeout in seconds. Server closes the connection when it is completely silent.
-	IdleTimeout int32 `protobuf:"varint,7,opt,name=idle_timeout,json=idleTimeout,proto3" json:"idle_timeout,omitempty"`
-	// Pre-generated LiveKit access token. Preferred over api_key/api_secret when set.
-	ApiToken string `protobuf:"bytes,8,opt,name=api_token,json=apiToken,proto3" json:"api_token,omitempty"`
+	IdleTimeout     int32             `protobuf:"varint,7,opt,name=idle_timeout,json=idleTimeout,proto3" json:"idle_timeout,omitempty"`
+	ApiToken        string            `protobuf:"bytes,8,opt,name=api_token,json=apiToken,proto3" json:"api_token,omitempty"`
 }
 
 func (x *LiveKitEgressConfig) Reset() {
@@ -332,19 +322,14 @@ func (x *LiveKitEgressConfig) GetApiToken() string {
 	return ""
 }
 
-// AgoraEgressConfig contains configuration for streaming to an Agora channel
 type AgoraEgressConfig struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// Agora channel name to join
 	ChannelName string `protobuf:"bytes,1,opt,name=channel_name,json=channelName,proto3" json:"channel_name,omitempty"`
-	// Agora token for authentication (optional for testing)
-	Token string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
-	// Publisher UID in the channel (0 for auto-assign)
-	Uid uint32 `protobuf:"varint,3,opt,name=uid,proto3" json:"uid,omitempty"`
-	// Publisher identity/name
+	Token       string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Uid         uint32 `protobuf:"varint,3,opt,name=uid,proto3" json:"uid,omitempty"`
 	PublisherId string `protobuf:"bytes,4,opt,name=publisher_id,json=publisherId,proto3" json:"publisher_id,omitempty"`
 }
 
@@ -417,14 +402,10 @@ type ClientConfigureSession struct {
 	Bitrate              int32                `protobuf:"varint,2,opt,name=bitrate,proto3" json:"bitrate,omitempty"`
 	AudioFormat          AudioFormat          `protobuf:"varint,3,opt,name=audio_format,json=audioFormat,proto3,enum=message.AudioFormat" json:"audio_format,omitempty"`
 	TransportCompression TransportCompression `protobuf:"varint,4,opt,name=transport_compression,json=transportCompression,proto3,enum=message.TransportCompression" json:"transport_compression,omitempty"`
-	// Egress configuration (optional)
-	// If egress_type is UNSPECIFIED or not set, animation data is returned via WebSocket
-	EgressType EgressType `protobuf:"varint,5,opt,name=egress_type,json=egressType,proto3,enum=message.EgressType" json:"egress_type,omitempty"`
-	// LiveKit egress configuration (required when egress_type is EGRESS_TYPE_LIVEKIT)
-	LivekitEgress *LiveKitEgressConfig `protobuf:"bytes,6,opt,name=livekit_egress,json=livekitEgress,proto3" json:"livekit_egress,omitempty"`
-	// Agora egress configuration (required when egress_type is EGRESS_TYPE_AGORA)
-	AgoraEgress *AgoraEgressConfig `protobuf:"bytes,7,opt,name=agora_egress,json=agoraEgress,proto3" json:"agora_egress,omitempty"`
-	ExtraParams map[string]string  `protobuf:"bytes,8,rep,name=extra_params,json=extraParams,proto3" json:"extra_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	EgressType           EgressType           `protobuf:"varint,5,opt,name=egress_type,json=egressType,proto3,enum=message.EgressType" json:"egress_type,omitempty"`
+	LivekitEgress        *LiveKitEgressConfig `protobuf:"bytes,6,opt,name=livekit_egress,json=livekitEgress,proto3" json:"livekit_egress,omitempty"`
+	AgoraEgress          *AgoraEgressConfig   `protobuf:"bytes,7,opt,name=agora_egress,json=agoraEgress,proto3" json:"agora_egress,omitempty"`
+	ExtraParams          map[string]string    `protobuf:"bytes,8,rep,name=extra_params,json=extraParams,proto3" json:"extra_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
 }
 
 func (x *ClientConfigureSession) Reset() {
@@ -562,16 +543,13 @@ func (x *ServerConfirmSession) GetConnectionId() string {
 	return ""
 }
 
-// TraceContext carries W3C Trace Context for one req_id.
 type TraceContext struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// W3C traceparent: version, trace ID, parent span ID, and trace flags.
 	Traceparent string `protobuf:"bytes,1,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
-	// Optional W3C vendor-specific trace state.
-	Tracestate string `protobuf:"bytes,2,opt,name=tracestate,proto3" json:"tracestate,omitempty"`
+	Tracestate  string `protobuf:"bytes,2,opt,name=tracestate,proto3" json:"tracestate,omitempty"`
 }
 
 func (x *TraceContext) Reset() {
@@ -625,11 +603,9 @@ type ClientAudioInput struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	ReqId string `protobuf:"bytes,1,opt,name=req_id,json=reqId,proto3" json:"req_id,omitempty"`
-	End   bool   `protobuf:"varint,2,opt,name=end,proto3" json:"end,omitempty"`
-	Audio []byte `protobuf:"bytes,3,opt,name=audio,proto3" json:"audio,omitempty"`
-	// Optional. Set on the first ClientAudioInput for each req_id when tracing
-	// is enabled. Later chunks omit it.
+	ReqId        string        `protobuf:"bytes,1,opt,name=req_id,json=reqId,proto3" json:"req_id,omitempty"`
+	End          bool          `protobuf:"varint,2,opt,name=end,proto3" json:"end,omitempty"`
+	Audio        []byte        `protobuf:"bytes,3,opt,name=audio,proto3" json:"audio,omitempty"`
 	TraceContext *TraceContext `protobuf:"bytes,4,opt,name=trace_context,json=traceContext,proto3" json:"trace_context,omitempty"`
 }
 

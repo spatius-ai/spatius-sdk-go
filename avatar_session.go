@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,6 +25,13 @@ const (
 	sessionTokenPath     = "/session-tokens"
 	ingressWebSocketPath = "/websocket"
 )
+
+// handshakeTimeout bounds the wait for the server's handshake response
+// (ServerConfirmSession or ServerError) after the WebSocket is connected and
+// the configuration is sent, so Start cannot hang forever when the server
+// accepts the WebSocket but never replies. It is a variable so tests can
+// shrink it.
+var handshakeTimeout = 10 * time.Second
 
 // requestTelemetry tracks per-request telemetry state for one req_id.
 type requestTelemetry struct {
@@ -59,6 +67,11 @@ func NewAvatarSession(opts ...SessionOption) *AvatarSession {
 		}
 	}
 	cfg.applyEndpointDefaults()
+	if cfg.ExpireAt.IsZero() {
+		// Default session-token lifetime applied when the caller does not set
+		// WithExpireAt.
+		cfg.ExpireAt = time.Now().Add(DefaultSessionTokenTTL)
+	}
 	return &AvatarSession{config: cfg}
 }
 
@@ -81,27 +94,69 @@ func (s *AvatarSession) Init(ctx context.Context) error {
 		return errors.New("init avatar session: session config is nil")
 	}
 
-	s.ensureRegionResolved(ctx)
+	startedAt := time.Now()
+	regionCacheHit := s.ensureRegionResolved(ctx)
 	setResourceContext(s.config.AppID, s.config.Region)
 
 	span := startSpan("avatar.session.init", s.telemetryTraceAttributes())
-	err := s.init(ctx)
-	finishSpan(span, map[string]any{"region": s.config.Region}, err)
+	tokenCacheHit, err := s.init(ctx)
+	s.finishInitTelemetry(span, startedAt, regionCacheHit, tokenCacheHit, err)
 	return err
 }
 
-func (s *AvatarSession) init(ctx context.Context) error {
+// finishInitTelemetry records the avatar.session.init.duration histogram and
+// ends the init span, tagging both with region_cache_hit / token_cache_hit
+// when applicable so warm vs cold dispatches are distinguishable without
+// relying on near-zero durations alone.
+func (s *AvatarSession) finishInitTelemetry(span trace.Span, startedAt time.Time, regionCacheHit, tokenCacheHit *bool, err error) {
+	spanAttributes := map[string]any{"region": s.config.Region}
+	metricAttributes := s.telemetryMetricAttributes(boolPtr(err == nil))
+	if regionCacheHit != nil {
+		spanAttributes["region_cache_hit"] = *regionCacheHit
+		metricAttributes["region_cache_hit"] = *regionCacheHit
+	}
+	if tokenCacheHit != nil {
+		spanAttributes["token_cache_hit"] = *tokenCacheHit
+		metricAttributes["token_cache_hit"] = *tokenCacheHit
+	}
+	recordMetric("avatar.session.init.duration",
+		float64(time.Since(startedAt).Milliseconds()), metricAttributes)
+	finishSpan(span, spanAttributes, err)
+}
+
+// init exchanges configuration credentials for a session token from the
+// console API, reusing a token prefetched by Prewarm when one is cached. The
+// returned indicator is true when the token came from the warm cache, false
+// when it was fetched, and nil when init failed.
+func (s *AvatarSession) init(ctx context.Context) (*bool, error) {
 	cfg := s.config
 	if cfg.APIKey == "" {
-		return errors.New("init avatar session: missing API key")
+		return nil, errors.New("init avatar session: missing API key")
 	}
 	if cfg.ConsoleEndpointURL == "" {
-		return errors.New("init avatar session: missing console endpoint URL")
+		return nil, errors.New("init avatar session: missing console endpoint URL")
 	}
 	if cfg.ExpireAt.IsZero() {
-		return errors.New("init avatar session: missing expireAt")
+		return nil, errors.New("init avatar session: missing expireAt")
 	}
 
+	if cached := cachedSessionTokenFor(cfg.APIKey, cfg.AppID, cfg.ConsoleEndpointURL); cached != "" {
+		s.sessionToken = cached
+		return boolPtr(true), nil
+	}
+
+	sessionToken, err := fetchSessionToken(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	s.sessionToken = sessionToken
+	return boolPtr(false), nil
+}
+
+// fetchSessionToken exchanges configuration credentials for a session token
+// from the console API. Used by AvatarSession.Init and by Prewarm to fetch a
+// token ahead of dispatch.
+func fetchSessionToken(ctx context.Context, cfg *SessionConfig) (string, error) {
 	endpoint := strings.TrimRight(cfg.ConsoleEndpointURL, "/") + sessionTokenPath
 
 	payload := sessionTokenRequest{
@@ -110,12 +165,15 @@ func (s *AvatarSession) init(ctx context.Context) error {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("init avatar session: encode request: %w", err)
+		return "", fmt.Errorf("init avatar session: encode request: %w", err)
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, sessionTokenTimeout)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("init avatar session: create request: %w", err)
+		return "", fmt.Errorf("init avatar session: create request: %w", err)
 	}
 	req.Header.Set("X-Api-Key", cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -126,11 +184,11 @@ func (s *AvatarSession) init(ctx context.Context) error {
 		serverAddress = parsed.Hostname()
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sharedHTTPClient.Do(req)
 	if err != nil {
 		recordHTTPClientDuration(sessionTokenPath, http.MethodPost,
 			float64(time.Since(requestStartedAt).Milliseconds()), 0, serverAddress)
-		return fmt.Errorf("init avatar session: request session token: %w", err)
+		return "", fmt.Errorf("init avatar session: request session token: %w", err)
 	}
 	defer resp.Body.Close() // nolint:errcheck
 
@@ -138,28 +196,27 @@ func (s *AvatarSession) init(ctx context.Context) error {
 	if err != nil {
 		recordHTTPClientDuration(sessionTokenPath, http.MethodPost,
 			float64(time.Since(requestStartedAt).Milliseconds()), resp.StatusCode, serverAddress)
-		return fmt.Errorf("init avatar session: read response: %w", err)
+		return "", fmt.Errorf("init avatar session: read response: %w", err)
 	}
 	recordHTTPClientDuration(sessionTokenPath, http.MethodPost,
 		float64(time.Since(requestStartedAt).Milliseconds()), resp.StatusCode, serverAddress)
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("init avatar session: request failed with status %d", resp.StatusCode)
+		return "", fmt.Errorf("init avatar session: request failed with status %d", resp.StatusCode)
 	}
 
 	var tokenResp sessionTokenResponse
 	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
-		return fmt.Errorf("init avatar session: decode response: %w", err)
+		return "", fmt.Errorf("init avatar session: decode response: %w", err)
 	}
 	if len(tokenResp.Errors) > 0 {
-		return fmt.Errorf("init avatar session: %s", formatSessionTokenError(resp.StatusCode, &tokenResp))
+		return "", fmt.Errorf("init avatar session: %s", formatSessionTokenError(resp.StatusCode, &tokenResp))
 	}
 	if tokenResp.SessionToken == "" {
-		return errors.New("init avatar session: empty session token in response")
+		return "", errors.New("init avatar session: empty session token in response")
 	}
 
-	s.sessionToken = tokenResp.SessionToken
-	return nil
+	return tokenResp.SessionToken, nil
 }
 
 // Start establishes WebSocket connection to the ingress endpoint and performs v2 handshake.
@@ -246,7 +303,7 @@ func (s *AvatarSession) start(ctx context.Context) (string, error) {
 
 	u.RawQuery = q.Encode()
 
-	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, u.String(), headers)
+	conn, resp, err := websocketDialer.DialContext(ctx, u.String(), headers)
 	if err != nil {
 		if resp != nil {
 			// Map HTTP status to SDK error code
@@ -357,16 +414,31 @@ func (s *AvatarSession) awaitServerConfirmSession(ctx context.Context) (string, 
 		return "", errors.New("websocket connection is not established")
 	}
 
-	// Set read deadline based on context
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := s.conn.SetReadDeadline(deadline); err != nil {
-			return "", fmt.Errorf("start avatar session: set read deadline: %w", err)
-		}
-		defer s.conn.SetReadDeadline(time.Time{}) // nolint:errcheck
+	// Bound the wait with handshakeTimeout so Start cannot hang forever when
+	// the server accepts the WebSocket but never replies; an earlier caller
+	// deadline still wins.
+	deadline := time.Now().Add(handshakeTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
 	}
+	if err := s.conn.SetReadDeadline(deadline); err != nil {
+		return "", fmt.Errorf("start avatar session: set read deadline: %w", err)
+	}
+	defer s.conn.SetReadDeadline(time.Time{}) // nolint:errcheck
 
 	messageType, payload, err := s.conn.ReadMessage()
 	if err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return "", &AvatarSDKError{
+				Code:  ErrorCodeConnectionFailed,
+				Phase: "websocket_handshake",
+				Message: fmt.Sprintf(
+					"failed during websocket handshake: timed out waiting for server response after %gs",
+					handshakeTimeout.Seconds(),
+				),
+			}
+		}
 		return "", fmt.Errorf("start avatar session: failed during websocket handshake: %w", err)
 	}
 
@@ -724,8 +796,10 @@ func (s *AvatarSession) readLoop(ctx context.Context) {
 				s.recordAnimationTelemetry(anim.GetReqId(), last)
 			}
 			if cfg != nil && cfg.TransportFrames != nil {
-				frame := append([]byte(nil), payload...)
-				callbacks.dispatch(func() { cfg.TransportFrames(frame, last) })
+				// payload is a fresh buffer per ReadMessage and proto.Unmarshal
+				// does not retain a reference to it, so it is safe to hand to the
+				// callback as-is.
+				callbacks.dispatch(func() { cfg.TransportFrames(payload, last) })
 			}
 		case message.MessageType_MESSAGE_SERVER_ERROR:
 			serverErr := envelope.GetServerError()

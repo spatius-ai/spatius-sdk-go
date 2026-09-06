@@ -311,7 +311,7 @@ func TestAvatarSessionInitMissingConsoleEndpoint(t *testing.T) {
 	// the cached region or DefaultRegion). Stub it here to exercise the
 	// defensive validation.
 	original := resolveRegionFunc
-	resolveRegionFunc = func(context.Context, string, string) string { return "" }
+	resolveRegionFunc = func(context.Context, string, string) (string, bool) { return "", false }
 	t.Cleanup(func() { resolveRegionFunc = original })
 
 	session := &AvatarSession{config: defaultSessionConfig()}
@@ -326,10 +326,12 @@ func TestAvatarSessionInitMissingConsoleEndpoint(t *testing.T) {
 }
 
 func TestAvatarSessionInitMissingExpireAt(t *testing.T) {
-	session := NewAvatarSession(
-		WithAPIKey("api-key"),
-		WithConsoleEndpointURL("https://console.test"),
-	)
+	// NewAvatarSession defaults ExpireAt, so the defensive validation is only
+	// reachable with a directly-constructed session.
+	session := &AvatarSession{config: &SessionConfig{
+		APIKey:             "api-key",
+		ConsoleEndpointURL: "https://console.test",
+	}}
 	err := session.Init(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "missing expireAt") {
 		t.Fatalf("expected missing expireAt error, got %v", err)
@@ -1907,5 +1909,106 @@ func TestReqIDGeneration(t *testing.T) {
 	}
 	if received := waitForReqID(); received != thirdReqID {
 		t.Fatalf("expected server to receive req id %q for fourth chunk, got %q", thirdReqID, received)
+	}
+}
+
+func TestAvatarSessionStartHandshakeTimeout(t *testing.T) {
+	original := handshakeTimeout
+	handshakeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { handshakeTimeout = original })
+
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// Read ClientConfigureSession, then never respond.
+		_, _, _ = conn.ReadMessage()
+		time.Sleep(2 * time.Second)
+	}))
+	defer server.Close()
+
+	session := NewAvatarSession(
+		WithAvatarID("avatar-123"),
+		WithAppID("app-123"),
+		WithIngressEndpointURL(strings.Replace(server.URL, "http", "ws", 1)),
+	)
+	session.sessionToken = "token"
+
+	_, err := session.Start(context.Background())
+	if err == nil {
+		t.Fatal("expected handshake timeout error")
+	}
+	var sdkErr *AvatarSDKError
+	if !errors.As(err, &sdkErr) {
+		t.Fatalf("expected AvatarSDKError, got %T: %v", err, err)
+	}
+	if sdkErr.Code != ErrorCodeConnectionFailed {
+		t.Fatalf("expected connectionFailed code, got %q", sdkErr.Code)
+	}
+	if sdkErr.Phase != "websocket_handshake" {
+		t.Fatalf("expected websocket_handshake phase, got %q", sdkErr.Phase)
+	}
+	if !strings.Contains(sdkErr.Message, "timed out") {
+		t.Fatalf("expected timeout message, got %q", sdkErr.Message)
+	}
+	if session.conn != nil {
+		t.Fatal("expected connection to be cleared after a failed handshake")
+	}
+}
+
+func TestNewAvatarSessionDefaultsExpireAt(t *testing.T) {
+	before := time.Now().Add(DefaultSessionTokenTTL)
+	session := NewAvatarSession()
+	after := time.Now().Add(DefaultSessionTokenTTL)
+
+	expireAt := session.Config().ExpireAt
+	if expireAt.IsZero() {
+		t.Fatal("expected ExpireAt to default to a non-zero value")
+	}
+	if expireAt.Before(before) || expireAt.After(after) {
+		t.Fatalf("expected ExpireAt within [%v, %v], got %v", before, after, expireAt)
+	}
+
+	// An explicit WithExpireAt must be preserved.
+	explicit := time.Now().Add(5 * time.Minute)
+	session = NewAvatarSession(WithExpireAt(explicit))
+	if !session.Config().ExpireAt.Equal(explicit) {
+		t.Fatalf("expected explicit ExpireAt %v, got %v", explicit, session.Config().ExpireAt)
+	}
+}
+
+func TestAvatarSessionInitUsesCachedSessionToken(t *testing.T) {
+	clearSessionTokenCacheForTest(t)
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("console API must not be called when a prefetched token is cached")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer tokenServer.Close()
+
+	storeSessionToken("api-key", "app-1", tokenServer.URL, "tok-cached",
+		time.Now().Add(time.Hour))
+
+	session := NewAvatarSession(
+		WithAPIKey("api-key"),
+		WithAppID("app-1"),
+		WithConsoleEndpointURL(tokenServer.URL),
+	)
+	tokenCacheHit, err := session.init(context.Background())
+	if err != nil {
+		t.Fatalf("init returned error: %v", err)
+	}
+	if tokenCacheHit == nil || !*tokenCacheHit {
+		t.Fatal("expected init to report a token cache hit")
+	}
+	if session.sessionToken != "tok-cached" {
+		t.Fatalf("expected session token tok-cached, got %q", session.sessionToken)
 	}
 }

@@ -123,7 +123,7 @@ func TestResolveRegionAutoResolvesAndCaches(t *testing.T) {
 	if region != "ap-southeast" {
 		t.Fatalf("expected ap-southeast, got %q", region)
 	}
-	if cached := cachedBootstrapRegion(); cached != "ap-southeast" {
+	if cached, _ := cachedBootstrapRegion(); cached != "ap-southeast" {
 		t.Fatalf("expected cached region ap-southeast, got %q", cached)
 	}
 }
@@ -159,14 +159,63 @@ func TestResolveRegionFailureFallsBackToDefaultRegion(t *testing.T) {
 
 func TestResolveRegionFailureFallsBackToCachedRegion(t *testing.T) {
 	clearBootstrapRegionCache(t)
-	cacheBootstrapRegion("eu-central")
+	// Seed a stale cache entry: it must not serve as a fresh hit, but must
+	// still be the failure fallback.
+	bootstrapCache.Lock()
+	bootstrapCache.region = "eu-central"
+	bootstrapCache.cachedAt = time.Time{}
+	bootstrapCache.Unlock()
 	useBootstrapServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	region := resolveRegion(context.Background(), "app-1", DefaultRegionRequest)
+	region, cacheHit := resolveRegionWithCacheInfo(context.Background(), "app-1", DefaultRegionRequest)
 	if region != "eu-central" {
 		t.Fatalf("expected fallback to cached eu-central, got %q", region)
+	}
+	if cacheHit {
+		t.Fatal("expected cacheHit=false for a stale-cache failure fallback")
+	}
+}
+
+func TestResolveRegionFreshCacheHitSkipsBootstrap(t *testing.T) {
+	clearBootstrapRegionCache(t)
+	server := useBootstrapServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"region": {"current": "eu-central"}}`))
+	})
+
+	region, cacheHit := resolveRegionWithCacheInfo(context.Background(), "app-1", DefaultRegionRequest)
+	if region != "eu-central" || cacheHit {
+		t.Fatalf("expected (eu-central, false) from the first resolution, got (%q, %t)", region, cacheHit)
+	}
+
+	// Within the TTL the bootstrap API must not be contacted again.
+	server.Close()
+	region, cacheHit = resolveRegionWithCacheInfo(context.Background(), "app-1", DefaultRegionRequest)
+	if region != "eu-central" {
+		t.Fatalf("expected cached eu-central, got %q", region)
+	}
+	if !cacheHit {
+		t.Fatal("expected cacheHit=true for a fresh cache hit")
+	}
+}
+
+func TestResolveRegionStaleCacheRefetches(t *testing.T) {
+	clearBootstrapRegionCache(t)
+	bootstrapCache.Lock()
+	bootstrapCache.region = "eu-central"
+	bootstrapCache.cachedAt = time.Now().Add(-regionCacheTTL - time.Minute)
+	bootstrapCache.Unlock()
+	useBootstrapServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"region": {"current": "ap-southeast"}}`))
+	})
+
+	region, cacheHit := resolveRegionWithCacheInfo(context.Background(), "app-1", DefaultRegionRequest)
+	if region != "ap-southeast" {
+		t.Fatalf("expected refetched ap-southeast, got %q", region)
+	}
+	if cacheHit {
+		t.Fatal("expected cacheHit=false after a stale cache refetch")
 	}
 }
 
@@ -184,7 +233,7 @@ func TestResolveRegionMissingRegionCurrentFallsBack(t *testing.T) {
 
 func TestEnsureRegionResolvedResolvesAutoRegion(t *testing.T) {
 	original := resolveRegionFunc
-	resolveRegionFunc = func(context.Context, string, string) string { return "eu-central" }
+	resolveRegionFunc = func(context.Context, string, string) (string, bool) { return "eu-central", false }
 	t.Cleanup(func() { resolveRegionFunc = original })
 
 	session := NewAvatarSession(WithAppID("app-1"))
@@ -212,9 +261,9 @@ func TestEnsureRegionResolvedResolvesAutoRegion(t *testing.T) {
 
 func TestEnsureRegionResolvedSkipsBootstrapForConcreteRegion(t *testing.T) {
 	original := resolveRegionFunc
-	resolveRegionFunc = func(context.Context, string, string) string {
+	resolveRegionFunc = func(context.Context, string, string) (string, bool) {
 		t.Error("bootstrap must not be called for a concrete region")
-		return ""
+		return "", false
 	}
 	t.Cleanup(func() { resolveRegionFunc = original })
 
@@ -232,9 +281,9 @@ func TestEnsureRegionResolvedSkipsBootstrapForConcreteRegion(t *testing.T) {
 
 func TestEnsureRegionResolvedSkipsBootstrapForExplicitURLs(t *testing.T) {
 	original := resolveRegionFunc
-	resolveRegionFunc = func(context.Context, string, string) string {
+	resolveRegionFunc = func(context.Context, string, string) (string, bool) {
 		t.Error("bootstrap must not be called for explicit endpoint URLs")
-		return ""
+		return "", false
 	}
 	t.Cleanup(func() { resolveRegionFunc = original })
 
@@ -255,9 +304,9 @@ func TestEnsureRegionResolvedSkipsBootstrapForExplicitURLs(t *testing.T) {
 
 func TestEnsureRegionResolvedPartialExplicitURLsComposeFromDefaultRegion(t *testing.T) {
 	original := resolveRegionFunc
-	resolveRegionFunc = func(context.Context, string, string) string {
+	resolveRegionFunc = func(context.Context, string, string) (string, bool) {
 		t.Error("bootstrap must not be called for partially explicit endpoint URLs")
-		return ""
+		return "", false
 	}
 	t.Cleanup(func() { resolveRegionFunc = original })
 
@@ -292,7 +341,7 @@ func TestInitResolvesAutoRegionViaBootstrap(t *testing.T) {
 	session.ensureRegionResolved(context.Background())
 	session.config.ConsoleEndpointURL = tokenServer.URL
 
-	if err := session.init(context.Background()); err != nil {
+	if _, err := session.init(context.Background()); err != nil {
 		t.Fatalf("init returned error: %v", err)
 	}
 	if session.sessionToken != "tok" {
